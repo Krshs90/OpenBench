@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Bricolage Grotesque", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  --color-brand-500: #3b82f6;
+  --color-brand-400: #60a5fa;
+  --color-background: #0a0a0a;
+  --color-surface: #111111;
+  --color-foreground: #ededed;
+  --color-border: rgba(255, 255, 255, 0.08);
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    @apply font-sans antialiased text-sm leading-relaxed;
+    min-height: 100dvh;
+    margin: 0;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  
+  *:focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-background;
+  }
+  
+  /* Hide scrollbar for Chrome, Safari and Opera */
+  ::-webkit-scrollbar {
+    display: none;
+  }
+  /* Hide scrollbar for IE, Edge and Firefox */
+  * {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply relative bg-[var(--color-surface)] border border-white/5 rounded-xl;
+  }
+  
+  .glass-inner {
+    @apply rounded-[calc(0.75rem-1px)];
+  }
+}
