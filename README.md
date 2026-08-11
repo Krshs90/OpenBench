@@ -101,6 +101,6 @@ Score = (TPS * 10) + (100 - Temp) - (VRAM * 5)
 <br />
 
 <div align="center">
-  <p>Built with ❤️ by the open-source community.</p>
-  <p><b>Star the repo if your PC survived the Stress Test!</b></p>
+  <p>Built with ❤️ by Krish Shah and the open-source community.</p>
+  <p><b>Star the repo if this was helpful! ⭐</b></p>
 </div>
