@@ -21,6 +21,12 @@
 
 > **OpenBench** is a lightning-fast, beautifully designed desktop application built with Tauri, React, and Rust. It connects to your local LLM engines (like Ollama) and puts your CPU, GPU, and RAM through absolute hell to see exactly what they're capable of.
 
+<br />
+
+<div align="center">
+  <img src="Images/OpenBench Gif.gif" alt="OpenBench Demo" width="800" style="border-radius: 8px;"/>
+</div>
+
 ---
 
 ### Why OpenBench?
@@ -55,6 +61,12 @@ Whether you're testing a new RTX 4090, pushing an M3 Max to its limits, or just 
     </td>
   </tr>
 </table>
+
+<br />
+
+<div align="center">
+  <img src="Images/openbench-llama3-8b-scorecard.png" alt="OpenBench Scorecard" width="500" style="border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);"/>
+</div>
 
 <br />
 
