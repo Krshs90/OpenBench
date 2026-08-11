@@ -1,6 +1,5 @@
 <div align="center">
-
-  <img src="Images/OpenBench Logo Transparent.png" alt="OpenBench Logo" width="200"/>
+  <img src="Images/OpenBench%20Logo%20Transparent.png" alt="OpenBench Logo" width="200"/>
 
   # OpenBench
 
@@ -21,10 +20,13 @@
 
 > **OpenBench** is a lightning-fast, beautifully designed desktop application built with Tauri, React, and Rust. It connects to your local LLM engines (like Ollama) and puts your CPU, GPU, and RAM through absolute hell to see exactly what they're capable of.
 
+> [!WARNING]
+> **Hardware Support:** OpenBench currently only supports **Windows OS** and **NVIDIA GPUs** for live hardware telemetry tracking. 
+
 <br />
 
 <div align="center">
-  <img src="Images/OpenBench Gif.gif" alt="OpenBench Demo" width="800" style="border-radius: 8px;"/>
+  <img src="Images/OpenBench%20Gif.gif" alt="OpenBench Demo" width="800" style="border-radius: 8px;"/>
 </div>
 
 ---
@@ -115,4 +117,12 @@ Score = (TPS * 10) + (100 - Temp) - (VRAM * 5)
 <div align="center">
   <p>Built with ❤️ by Krish Shah and the open-source community.</p>
   <p><b>Star the repo if this was helpful! ⭐</b></p>
+  <br />
+  <a href="https://star-history.com/#Krshs90/OpenBench&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Krshs90/OpenBench&type=Date&theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Krshs90/OpenBench&type=Date" />
+      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Krshs90/OpenBench&type=Date" />
+    </picture>
+  </a>
 </div>
