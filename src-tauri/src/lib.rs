@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use sysinfo::{System, CpuRefreshKind, RefreshKind, MemoryRefreshKind};
 use walkdir::WalkDir;
 use std::path::Path;
@@ -12,6 +14,12 @@ use serde_json::Value;
 
 static CANCEL_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+fn create_hidden_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+    cmd
+}
 #[derive(Serialize)]
 struct SystemInfo {
     cpu_name: String,
@@ -52,7 +60,7 @@ async fn get_system_info() -> Result<SystemInfo, String> {
     let mut gpus = Vec::new();
     let mut vram_gb = 0.0;
     
-    if let Ok(output) = Command::new("nvidia-smi")
+    if let Ok(output) = create_hidden_command("nvidia-smi")
         .args(&["--query-gpu=name,memory.total", "--format=csv,noheader"])
         .output() {
         if let Ok(s) = String::from_utf8(output.stdout) {
@@ -123,7 +131,7 @@ async fn get_local_models(app_handle: tauri::AppHandle) -> Result<Vec<LocalModel
         }
     }
     
-    if let Ok(output) = Command::new("ollama").arg("list").output() {
+    if let Ok(output) = create_hidden_command("ollama").arg("list").output() {
         if let Ok(out_str) = String::from_utf8(output.stdout) {
             for line in out_str.lines().skip(1) {
                 let parts: Vec<&str> = line.split_whitespace().collect();
@@ -192,7 +200,7 @@ async fn get_local_models(app_handle: tauri::AppHandle) -> Result<Vec<LocalModel
 
 #[tauri::command]
 async fn get_ollama_version() -> Result<String, String> {
-    if let Ok(output) = Command::new("ollama").arg("-v").output() {
+    if let Ok(output) = create_hidden_command("ollama").arg("-v").output() {
         if let Ok(out_str) = String::from_utf8(output.stdout) {
            
             let version = out_str.replace("ollama version is", "").trim().to_string();
@@ -232,7 +240,7 @@ struct ProgressPayload {
 }
 
 fn get_nvidia_telemetry() -> (f64, f64) {
-    let output = Command::new("nvidia-smi")
+    let output = create_hidden_command("nvidia-smi")
         .args(&["--query-gpu=memory.used,temperature.gpu", "--format=csv,noheader,nounits"])
         .output();
     if let Ok(out) = output {
@@ -916,7 +924,7 @@ async fn unload_model(model: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn pull_model(model: String) -> Result<(), String> {
-    let status = Command::new("ollama")
+    let status = create_hidden_command("ollama")
         .args(["pull", &model])
         .status()
         .map_err(|e| e.to_string())?;
@@ -942,7 +950,7 @@ async fn run_intelligence_benchmark(
     custom_prompts: Option<Vec<String>>
 ) -> Result<IntelligenceResult, String> {
     
-    let _ = Command::new("ollama").args(["pull", &judge_model]).output();
+    let _ = create_hidden_command("ollama").args(["pull", &judge_model]).output();
 
     let all_models = get_local_models(app_handle.clone()).await.unwrap_or_default();
     let matched = all_models.iter().find(|m| m.name == target_model);
