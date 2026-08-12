@@ -1,60 +1,28 @@
 import { useState, useEffect } from "react";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
-import { LocalModel } from "../types";
+import { LocalModel, RunningModel } from "../types";
 import { Database, CheckCircle, HardDrive, Spinner, WarningCircle, ArrowCircleUp, MagnifyingGlass, DownloadSimple } from "@phosphor-icons/react";
 import { invoke } from "@tauri-apps/api/core";
-
-interface RunningModel {
-  name: string;
-  size: number;
-  size_vram: number;
-}
+import { useGlobalCache } from "../context/GlobalCacheContext";
+import { useBenchmark } from "../context/BenchmarkContext";
 
 export function Models() {
-  const [models, setModels] = useState<LocalModel[]>([]);
-  const [runningModels, setRunningModels] = useState<RunningModel[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { 
+    models, 
+    runningModels, 
+    loadingModels: loading, 
+    ollamaVersion, 
+    latestOllama, 
+    refreshModels, 
+    refreshRunningModels 
+  } = useGlobalCache();
+  const { status: benchmarkStatus } = useBenchmark();
   const [searchQuery, setSearchQuery] = useState("");
   
-  const [ollamaVersion, setOllamaVersion] = useState<string>("");
-  const [latestOllama, setLatestOllama] = useState<string>("");
-
   useEffect(() => {
-    async function init() {
-      try {
-        const result = await invoke<LocalModel[]>("get_local_models");
-        setModels(result);
-        
-        const localVersion = await invoke<string>("get_ollama_version");
-        setOllamaVersion(localVersion.replace("v", ""));
-        
-        const ghRes = await fetch("https://api.github.com/repos/ollama/ollama/releases/latest");
-        const ghData = await ghRes.json();
-        if (ghData && ghData.tag_name) {
-          setLatestOllama(ghData.tag_name.replace("v", ""));
-        }
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    
-    const fetchRunning = async () => {
-      try {
-        const res = await invoke<RunningModel[]>("get_running_models");
-        setRunningModels(res);
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    
-    init();
-    fetchRunning();
-    const interval = setInterval(fetchRunning, 3000);
-    return () => clearInterval(interval);
-  }, []);
+    refreshModels();
+  }, [refreshModels]);
 
   const needsUpdate = ollamaVersion && latestOllama && ollamaVersion !== latestOllama;
 
@@ -113,12 +81,8 @@ export function Models() {
                   <RunningModelCard 
                     key={i} 
                     model={m} 
-                    onUnloaded={async () => {
-                      try {
-                        const res = await invoke<RunningModel[]>("get_running_models");
-                        setRunningModels(res);
-                      } catch (e) {}
-                    }} 
+                    onUnloaded={refreshRunningModels} 
+                    isBenchmarkRunning={benchmarkStatus === "running"}
                   />
                 ))}
               </div>
@@ -191,11 +155,10 @@ function ModelCard({ model }: { model: LocalModel }) {
       </div>
       
       <div className="flex items-center justify-between mt-2">
-        <div className="flex items-center gap-3 text-xs text-neutral-500">
-          <div className="flex items-center gap-1.5 font-mono">
-            <HardDrive className="w-4 h-4" />
-            <span>{model.size}</span>
-          </div>
+        <div className="flex flex-wrap items-center gap-2 text-[10px] text-neutral-500 font-mono">
+          <span className="bg-white/5 px-1.5 py-0.5 rounded flex items-center gap-1.5"><HardDrive className="w-3 h-3" />{model.size}</span>
+          {model.parameter_size && <span className="bg-white/5 px-1.5 py-0.5 rounded">{model.parameter_size}</span>}
+          {model.quantization_level && <span className="bg-white/5 px-1.5 py-0.5 rounded">{model.quantization_level}</span>}
         </div>
         
         <div className="flex items-center gap-2">
@@ -231,7 +194,7 @@ function ModelCard({ model }: { model: LocalModel }) {
   );
 }
 
-function RunningModelCard({ model, onUnloaded }: { model: RunningModel, onUnloaded: () => void }) {
+function RunningModelCard({ model, onUnloaded, isBenchmarkRunning }: { model: RunningModel, onUnloaded: () => void, isBenchmarkRunning: boolean }) {
   const [unloading, setUnloading] = useState(false);
 
   const handleUnload = async () => {
@@ -251,14 +214,24 @@ function RunningModelCard({ model, onUnloaded }: { model: RunningModel, onUnload
         <span className="text-neutral-200 font-medium truncate max-w-[200px]" title={model.name}>{model.name}</span>
         <span className="text-xs text-neutral-500">{(model.size_vram / 1024 / 1024 / 1024).toFixed(1)} GB VRAM</span>
       </div>
-      <button 
-        onClick={handleUnload}
-        disabled={unloading}
-        className="px-3 py-1.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 text-xs rounded transition-colors border border-red-500/20 whitespace-nowrap disabled:opacity-50 flex items-center gap-1.5"
-      >
-        {unloading && <Spinner className="animate-spin" />}
-        {unloading ? "Unloading..." : "Unload"}
-      </button>
+      {isBenchmarkRunning ? (
+        <button 
+          disabled
+          className="px-3 py-1.5 bg-neutral-500/10 text-neutral-400 text-xs rounded border border-neutral-500/20 whitespace-nowrap opacity-70 cursor-not-allowed"
+          title="Cannot unload while a benchmark is running"
+        >
+          In Benchmark
+        </button>
+      ) : (
+        <button 
+          onClick={handleUnload}
+          disabled={unloading}
+          className="px-3 py-1.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 text-xs rounded transition-colors border border-red-500/20 whitespace-nowrap disabled:opacity-50 flex items-center gap-1.5"
+        >
+          {unloading && <Spinner className="animate-spin" />}
+          {unloading ? "Unloading..." : "Unload"}
+        </button>
+      )}
     </Card>
   );
 }

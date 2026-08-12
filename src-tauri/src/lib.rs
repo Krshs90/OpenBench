@@ -7,8 +7,7 @@ use walkdir::WalkDir;
 use std::path::Path;
 use std::time::{Instant, Duration};
 use tauri::{Manager, Emitter, Window};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use futures_util::StreamExt;
 use serde_json::Value;
 
@@ -227,6 +226,11 @@ struct BenchmarkResult {
     temp_c: f64,
     response_text: Option<String>,
     prompt_metrics: Option<Vec<PromptMetric>>,
+    ttft_ms: f64,
+    prefill_rate: f64,
+    tps_variance: f64,
+    p90_latency_ms: f64,
+    tool_call_count: Option<u32>,
 }
 
 #[derive(Clone, Serialize)]
@@ -466,6 +470,11 @@ async fn run_single_benchmark(window: Window, model_name: String, benchmark_type
         temp_c: peak_temp,
         response_text: Some(full_response),
         prompt_metrics: None,
+        ttft_ms: 0.0,
+        prefill_rate: 0.0,
+        tps_variance: 0.0,
+        p90_latency_ms: 0.0,
+        tool_call_count: None,
     })
 }
 
@@ -566,8 +575,13 @@ async fn run_benchmark(
                 tokens_per_sec: avg_tps,
                 vram_peak_gb: peak_vram,
                 temp_c: peak_temp,
+                ttft_ms: 0.0,
+                prefill_rate: 0.0,
                 response_text: Some(full_responses.join("\n---\n")),
                 prompt_metrics: Some(prompt_metrics),
+                tps_variance: 0.0,
+                p90_latency_ms: 0.0,
+                tool_call_count: None, // Hard to capture exact tool counts without intercepting responses manually, so null for now in base rust engine
             })
         }));
     }
@@ -605,6 +619,10 @@ struct SavedResult {
     difficulty: Option<String>,
     reasoning: Option<String>,
     prompt_metrics: Option<Vec<PromptMetric>>,
+    tool_call_count: Option<u32>,
+    tps_history: Option<Vec<f64>>,
+    vram_history: Option<Vec<f64>>,
+    temp_history: Option<Vec<f64>>,
 }
 
 fn get_db_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -640,6 +658,10 @@ async fn save_result(
     provided_score: Option<i64>,
     reasoning: Option<String>,
     prompt_metrics: Option<Vec<PromptMetric>>,
+    tool_call_count: Option<u32>,
+    tps_history: Option<Vec<f64>>,
+    vram_history: Option<Vec<f64>>,
+    temp_history: Option<Vec<f64>>,
 ) -> Result<(), String> {
     let db_path = get_db_path(&app_handle)?;
     let mut results = get_saved_results(app_handle.clone()).await?;
@@ -647,7 +669,8 @@ async fn save_result(
     let score = if let Some(s) = provided_score {
         s
     } else {
-        let mut raw_score = (speed * 10.0) + (100.0 - temp) - (vram * 5.0);
+        // Base score is directly tied to TPS, with very minor penalties for high temp/vram
+        let mut raw_score = speed - (temp * 0.05) - (vram * 0.2);
         if raw_score < 0.0 { raw_score = 0.0; }
         raw_score.round() as i64
     };
@@ -672,6 +695,10 @@ async fn save_result(
         difficulty,
         reasoning,
         prompt_metrics,
+        tool_call_count,
+        tps_history,
+        vram_history,
+        temp_history,
     };
     
     results.insert(0, new_result);
@@ -713,6 +740,7 @@ async fn delete_all_results(app_handle: tauri::AppHandle) -> Result<(), String> 
 struct AppSettings {
     auto_update: bool,
     preload_models: bool,
+    detailed_telemetry: bool,
     custom_endpoints: Vec<String>,
 }
 
@@ -721,6 +749,7 @@ impl Default for AppSettings {
         Self {
             auto_update: true,
             preload_models: false,
+            detailed_telemetry: false,
             custom_endpoints: Vec::new(),
         }
     }
@@ -957,7 +986,7 @@ async fn run_intelligence_benchmark(
     let engine = matched.map(|m| m.engine.clone()).unwrap_or_else(|| "Ollama".to_string());
     let endpoint = matched.map(|m| m.path.clone()).unwrap_or_default();
 
-    let base_prompt = "Write a short summary of the ocean.";
+    let _base_prompt = "Write a short summary of the ocean.";
     let question = match custom_prompts {
         Some(p) if !p.is_empty() => p[0].clone(),
         _ => match difficulty.as_str() {
@@ -1098,8 +1127,125 @@ pub fn run() {
             save_file_to_disk,
             run_intelligence_benchmark,
             check_app_updates,
-            get_live_telemetry
+            get_live_telemetry,
+            start_engine,
+            run_lm_eval,
+            check_python_dependencies,
+            install_python_dependencies
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[tauri::command]
+async fn check_python_dependencies() -> Result<bool, String> {
+    let output = create_hidden_command("python")
+        .args(["-c", "import lm_eval, requests, openai"])
+        .output()
+        .map_err(|e| format!("Failed to run python: {}", e))?;
+    
+    Ok(output.status.success())
+}
+
+#[tauri::command]
+async fn install_python_dependencies(_window: Window) -> Result<(), String> {
+    let mut cmd = create_hidden_command("python");
+    cmd.args(["-m", "pip", "install", "--force-reinstall", "lm-eval[api]", "requests", "openai", "transformers", "accelerate", "torch"]);
+    
+    let output = cmd.output()
+        .map_err(|e| format!("Failed to run pip install: {}", e))?;
+        
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).into_owned())
+    }
+}
+
+#[tauri::command]
+async fn start_engine(engine: String) -> Result<(), String> {
+    if engine.to_lowercase() == "ollama" {
+        create_hidden_command("ollama")
+            .arg("serve")
+            .spawn()
+            .map_err(|e| format!("Failed to start Ollama: {}", e))?;
+        Ok(())
+    } else {
+        Err(format!("Auto-start not supported for engine: {}", engine))
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LmEvalResult {
+    pub exact_match: Option<f64>,
+    pub acc: Option<f64>,
+    pub acc_norm: Option<f64>,
+    pub f1: Option<f64>,
+}
+
+#[tauri::command]
+async fn run_lm_eval(
+    window: Window,
+    model: String,
+    task: String,
+    limit: Option<u32>,
+) -> Result<Value, String> {
+    CANCEL_FLAG.store(false, Ordering::SeqCst);
+
+    let mut py_path = std::env::current_dir().unwrap_or_default().join("src-tauri").join("python").join("evaluator.py");
+    if !py_path.exists() {
+        py_path = std::env::current_dir().unwrap_or_default().join("python").join("evaluator.py");
+    }
+
+    let mut cmd = create_hidden_command("python");
+    cmd.arg(py_path);
+    cmd.arg("--model").arg(&model);
+    cmd.arg("--task").arg(&task);
+    
+    cmd.arg("--base-url").arg("http://localhost:11434/v1/completions");
+
+    if let Some(l) = limit {
+        cmd.arg("--limit").arg(l.to_string());
+    }
+
+    let _ = window.emit("benchmark-progress", ProgressPayload {
+        model: model.clone(),
+        status: format!("Starting Python evaluation for {}...", task),
+        progress_pct: 5.0,
+        current_tps: 0.0,
+        current_vram: Some(0.0),
+        current_temp: Some(0.0),
+    });
+
+    let output = cmd.output().map_err(|e| format!("Failed to spawn python: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("LM-Eval failed: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    
+    let mut json_str = stdout.to_string();
+    if let Some(idx) = stdout.rfind('{') {
+        if let Some(end_idx) = stdout.rfind('}') {
+            if end_idx > idx {
+                json_str = stdout[idx..=end_idx].to_string();
+            }
+        }
+    }
+
+    let parsed: Value = serde_json::from_str(&json_str)
+        .map_err(|e| format!("Failed to parse JSON from Python: {} | Output: {}", e, stdout))?;
+
+    let _ = window.emit("benchmark-progress", ProgressPayload {
+        model: model.clone(),
+        status: format!("Completed {}.", task),
+        progress_pct: 100.0,
+        current_tps: 0.0,
+        current_vram: Some(0.0),
+        current_temp: Some(0.0),
+    });
+
+    Ok(parsed)
 }

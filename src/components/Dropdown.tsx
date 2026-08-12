@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { CaretDown, Check } from "@phosphor-icons/react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { CaretDown, Check, MagnifyingGlass } from "@phosphor-icons/react";
 import { cn } from "./Card";
 
 export interface DropdownOption {
@@ -15,11 +15,14 @@ interface DropdownProps {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  searchable?: boolean;
 }
 
-export function Dropdown({ value, onChange, options, placeholder = "Select...", className, disabled }: DropdownProps) {
+export function Dropdown({ value, onChange, options, placeholder = "Select...", className, disabled, searchable = false }: DropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -30,6 +33,24 @@ export function Dropdown({ value, onChange, options, placeholder = "Select...", 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (isOpen && searchable && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+    if (!isOpen) {
+      setSearchQuery("");
+    }
+  }, [isOpen, searchable]);
+
+  const filteredOptions = useMemo(() => {
+    if (!searchable || !searchQuery.trim()) return options;
+    const lowerQ = searchQuery.toLowerCase();
+    return options.filter(o => 
+      o.label.toLowerCase().includes(lowerQ) || 
+      (o.description && o.description.toLowerCase().includes(lowerQ))
+    );
+  }, [options, searchable, searchQuery]);
 
   const selectedOption = options.find(o => o.value === value);
 
@@ -52,8 +73,21 @@ export function Dropdown({ value, onChange, options, placeholder = "Select...", 
 
       {isOpen && (
         <div className="absolute z-50 w-full mt-2 bg-[#111111] border border-white/10 rounded-lg shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-          <div className="max-h-60 overflow-y-auto p-1.5 flex flex-col gap-0.5">
-            {options.map((option) => (
+          {searchable && (
+            <div className="p-2 border-b border-white/5 relative">
+              <MagnifyingGlass className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
+              <input 
+                ref={searchInputRef}
+                type="text" 
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-md pl-8 pr-3 py-1.5 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-brand-500/50 transition-colors"
+                placeholder="Search..."
+              />
+            </div>
+          )}
+          <div className="max-h-60 overflow-y-auto p-1.5 flex flex-col gap-0.5 custom-scrollbar">
+            {filteredOptions.length > 0 ? filteredOptions.map((option) => (
               <button
                 key={option.value}
                 type="button"
@@ -76,7 +110,11 @@ export function Dropdown({ value, onChange, options, placeholder = "Select...", 
                 </div>
                 {value === option.value && <Check className="w-4 h-4 flex-shrink-0" />}
               </button>
-            ))}
+            )) : (
+              <div className="text-center py-4 text-sm text-neutral-500">
+                No results found.
+              </div>
+            )}
           </div>
         </div>
       )}

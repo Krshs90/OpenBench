@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { Card, cn } from "../components/Card";
 import { Button } from "../components/Button";
-import { Play, Cpu, HardDrive, Trash, Medal, ChartLineUp } from "@phosphor-icons/react";
+import { Play, Cpu, HardDrive, Trash, Medal, ChartLineUp, Spinner } from "@phosphor-icons/react";
 import { Link } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { useBenchmark } from "../context/BenchmarkContext";
-import { Spinner } from "@phosphor-icons/react";
+import { INTELLIGENCE_TESTS } from "./Benchmark";
 
 interface SystemInfo {
   cpu_name: string;
@@ -201,8 +201,11 @@ export function Home() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap font-medium text-neutral-200">{r.model}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs font-mono"><span className="px-2 py-0.5 bg-white/5 rounded">{(r as any).difficulty || r.workload || "Standard"}</span></td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right font-mono text-white">{r.score}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right font-mono">{r.speed.toFixed(1)} <span className="text-[10px] text-neutral-600">t/s</span></td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right font-mono text-white">
+                      {r.score}
+                      {INTELLIGENCE_TESTS.includes(r.benchmark_type || "") ? <span className="text-neutral-500 text-xs">/5</span> : ""}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right font-mono">{(r.speed ?? 0).toFixed(1)} <span className="text-[10px] text-neutral-600">t/s</span></td>
                   </tr>
                 ))}
               </tbody>

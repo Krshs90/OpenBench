@@ -5,10 +5,12 @@ import { FloppyDisk, Trash, ShieldCheck, Database, GitBranch } from "@phosphor-i
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "../components/Card";
 import { SectionHeader } from "../components/SectionHeader";
+import { LocalModel } from "../types";
 
 interface AppSettings {
   auto_update: boolean;
   preload_models: boolean;
+  detailed_telemetry: boolean;
   custom_endpoints: string[];
 }
 
@@ -16,6 +18,7 @@ export function Settings() {
   const [settings, setSettings] = useState<AppSettings>({
     auto_update: true,
     preload_models: false,
+    detailed_telemetry: false,
     custom_endpoints: [],
   });
   
@@ -23,6 +26,7 @@ export function Settings() {
   const [clearing, setClearing] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [preloadedModels, setPreloadedModels] = useState<LocalModel[]>([]);
 
   useEffect(() => {
     invoke<AppSettings>("get_settings").then((res) => {
@@ -39,6 +43,12 @@ export function Settings() {
       invoke("save_settings", { settings }).catch(console.error);
     }
   }, [settings, loaded]);
+
+  useEffect(() => {
+    if (settings.preload_models) {
+      invoke<LocalModel[]>("get_local_models").then(setPreloadedModels).catch(console.error);
+    }
+  }, [settings.preload_models]);
 
   const handleClearHistory = async () => {
     if (!confirmClear) {
@@ -100,14 +110,44 @@ export function Settings() {
             />
           </div>
           
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className="text-neutral-200 font-medium">Preload Model Library</span>
+                <span className="text-xs text-neutral-500">Aggressively scan filesystem on boot to make the Model Library page load instantly.</span>
+              </div>
+              <Toggle 
+                checked={settings.preload_models} 
+                onChange={(v) => setSettings({ ...settings, preload_models: v })} 
+              />
+            </div>
+            
+            {settings.preload_models && preloadedModels.length > 0 && (
+              <div className="mt-2 p-4 bg-black/20 rounded-xl border border-white/5 flex flex-col gap-3 animate-in fade-in slide-in-from-top-2">
+                <span className="text-xs text-brand-400 font-medium tracking-wider flex items-center gap-1.5">
+                  <Database className="w-4 h-4" />
+                  Models Preloaded in Memory
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {preloadedModels.map((m, i) => (
+                    <div key={i} className="text-[11px] text-neutral-300 bg-white/5 px-2.5 py-1 rounded-md border border-white/10 flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]"></div>
+                      {m.name}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          
           <div className="flex items-center justify-between">
             <div className="flex flex-col">
-              <span className="text-neutral-200 font-medium">Preload Model Library</span>
-              <span className="text-xs text-neutral-500">Aggressively scan filesystem on boot to make the Model Library page load instantly.</span>
+              <span className="text-neutral-200 font-medium">Detailed Telemetry Dashboard</span>
+              <span className="text-xs text-neutral-500">Render live, detailed performance charts during benchmarks (uses recharts). May slightly impact performance.</span>
             </div>
             <Toggle 
-              checked={settings.preload_models} 
-              onChange={(v) => setSettings({ ...settings, preload_models: v })} 
+              checked={settings.detailed_telemetry} 
+              onChange={(v) => setSettings({ ...settings, detailed_telemetry: v })} 
             />
           </div>
         </Card>

@@ -4,6 +4,7 @@ import { Button } from "../components/Button";
 import { DownloadSimple, CheckCircle, Storefront, Spinner, Cpu, HardDrive } from "@phosphor-icons/react";
 import { invoke } from "@tauri-apps/api/core";
 import { LocalModel } from "../types";
+import { useGlobalCache } from "../context/GlobalCacheContext";
 
 interface MarketplaceModel {
   id: string;
@@ -46,28 +47,24 @@ const CURATED_MODELS: MarketplaceModel[] = [
 ];
 
 export function Marketplace() {
-  const [localModels, setLocalModels] = useState<LocalModel[]>([]);
+  const { models: localModels, refreshModels } = useGlobalCache();
   const [installing, setInstalling] = useState<Record<string, boolean>>({});
 
-  const loadLocalModels = () => {
-    invoke<LocalModel[]>("get_local_models")
-      .then(setLocalModels)
-      .catch(console.error);
-  };
-
   useEffect(() => {
-    loadLocalModels();
-  }, []);
+    refreshModels();
+  }, [refreshModels]);
 
   const handleDownload = async (modelId: string) => {
     setInstalling(prev => ({ ...prev, [modelId]: true }));
     try {
       await invoke("pull_model", { model: modelId });
+      refreshModels(true);
     } catch (e) {
-      console.warn("Pull model returned an error (likely stderr stream), but process is active:", e);
+      console.warn("Pull model error:", e);
+      refreshModels(true);
+    } finally {
+      setInstalling(prev => ({ ...prev, [modelId]: false }));
     }
-    loadLocalModels();
-    setInstalling(prev => ({ ...prev, [modelId]: false }));
   };
 
   return (

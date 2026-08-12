@@ -12,6 +12,7 @@ import { Settings } from "./pages/Settings";
 import { Playground } from "./pages/Playground";
 import { Marketplace } from "./pages/Marketplace";
 import { BenchmarkProvider, useBenchmark } from "./context/BenchmarkContext";
+import { GlobalCacheProvider } from "./context/GlobalCacheContext";
 import { invoke } from "@tauri-apps/api/core";
 
 function Sidebar() {
@@ -24,6 +25,9 @@ function Sidebar() {
         invoke<boolean>("check_app_updates").then(setUpdateAvailable).catch(console.error);
       }
     }).catch(console.error);
+
+    // Auto-load Ollama if it's not running
+    invoke("start_engine", { engine: "Ollama" }).catch(() => {});
   }, []);
   
   const handleCancel = async () => {
@@ -151,16 +155,18 @@ function AnimatedRoutes() {
 
 function App() {
   return (
-    <BenchmarkProvider>
-      <Router>
-        <div className="flex w-full h-screen overflow-hidden bg-background text-foreground selection:bg-brand-500/30">
-          <Sidebar />
-          <main className="flex-1 relative overflow-y-auto">
-            <AnimatedRoutes />
-          </main>
-        </div>
-      </Router>
-    </BenchmarkProvider>
+    <GlobalCacheProvider>
+      <BenchmarkProvider>
+        <Router>
+          <div className="flex w-full h-screen overflow-hidden bg-background text-foreground selection:bg-brand-500/30">
+            <Sidebar />
+            <main className="flex-1 relative overflow-y-auto">
+              <AnimatedRoutes />
+            </main>
+          </div>
+        </Router>
+      </BenchmarkProvider>
+    </GlobalCacheProvider>
   );
 }
 

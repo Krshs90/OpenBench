@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
-import { ShareNetwork, DownloadSimple, Cpu, Spinner, Wrench, Lightbulb, Clock, Info, ArrowLeft, Trash, Image } from "@phosphor-icons/react";
+import { ShareNetwork, DownloadSimple, Cpu, Spinner, Wrench, Clock, Info, ArrowLeft, Trash, Image } from "@phosphor-icons/react";
 import { toPng, toJpeg, toSvg } from "html-to-image";
 import { Scorecard } from "../components/Scorecard";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -11,6 +11,8 @@ import { cn } from "../components/Card";
 import { ChartLineUp } from "@phosphor-icons/react";
 import { SectionHeader } from "../components/SectionHeader";
 import { Dropdown } from "../components/Dropdown";
+import { INTELLIGENCE_TESTS } from "./Benchmark";
+import { LineChart, Line, YAxis, ResponsiveContainer } from "recharts";
 
 interface SavedResult {
   id: string;
@@ -19,6 +21,10 @@ interface SavedResult {
   speed: number;
   vram: number;
   temp: number;
+  ttft_ms?: number;
+  prefill_rate?: number;
+  gpu_platform?: string;
+  quant_level?: string;
   score: number;
   timestamp: number;
   workload?: string;
@@ -26,11 +32,18 @@ interface SavedResult {
   difficulty?: string;
   reasoning?: string;
   prompt_metrics?: { prompt: string; tokens_per_sec: number; response: string }[];
+  tps_variance?: number;
+  p90_latency_ms?: number;
+  tool_call_count?: number;
+  tps_history?: number[];
+  vram_history?: number[];
+  temp_history?: number[];
 }
 
 export function Results() {
   const [results, setResults] = useState<SavedResult[]>([]);
   const [activeResult, setActiveResult] = useState<SavedResult | null>(null);
+  const [settings, setSettings] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [sortBy, setSortBy] = useState("newest");
@@ -57,6 +70,7 @@ export function Results() {
 
   useEffect(() => {
     loadResults();
+    invoke("get_settings").then(setSettings).catch(console.error);
   }, []);
 
   const handleClearHistory = async () => {
@@ -181,13 +195,16 @@ export function Results() {
               >
                 <div className="flex justify-between items-center w-full">
                   <span className="text-sm font-medium text-white truncate pr-2">{res.model}</span>
-                  <span className="text-xs font-mono text-brand-400 bg-brand-500/10 px-1.5 py-0.5 rounded">{res.score}</span>
+                  <span className="text-xs font-mono text-brand-400 bg-brand-500/10 px-1.5 py-0.5 rounded">
+                    {res.score}
+                    {INTELLIGENCE_TESTS.includes(res.benchmark_type || "") ? <span className="text-brand-500/50">/5</span> : ""}
+                  </span>
                 </div>
                 <div className="flex items-center gap-1.5 text-[10px] text-neutral-500 ">
                   <Clock size={12} className="mt-[1px]" />
                   <span>{new Date(res.timestamp * 1000).toLocaleDateString()}</span>
                   <span className="mx-0.5">•</span>
-                  <span>{res.speed.toFixed(1)} t/s</span>
+                  <span>{(res.speed ?? 0).toFixed(1)} t/s</span>
                 </div>
               </button>
             );
@@ -284,33 +301,21 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
   };
 
   const handleShare = () => {
-    const md = `**OpenBench Result**\nModel: ${result.model}\nHardware: ${result.hardware}\nScore: ${result.score}\nSpeed: ${result.speed.toFixed(1)} t/s\nVRAM: ${result.vram.toFixed(1)} GB`;
+    const md = `**OpenBench Result**\nModel: ${result.model}\nHardware: ${result.hardware}\nScore: ${result.score}\nSpeed: ${(result.speed ?? 0).toFixed(1)} t/s\nVRAM: ${(result.vram ?? 0).toFixed(1)} GB`;
     navigator.clipboard.writeText(md).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
   };
 
-  let hwAdvice = "Your system is perfectly balanced for this workload.";
-  let modelRec = "You can run most standard 7B models comfortably.";
 
-  if (result.vram > 12) {
-    hwAdvice = `Your ${result.hardware} handled the intense memory footprint (${result.vram.toFixed(1)}GB) well. You have plenty of headroom.`;
-    modelRec = "You have the headroom to run heavy 32B-70B parameter models (like Command-R or Llama-3 70B-Q4).";
-  } else if (result.speed < 10) {
-    hwAdvice = "You are heavily Memory Bandwidth constrained. Upgrading from DDR4 to DDR5 or getting a GPU with more VRAM will significantly increase your TPS.";
-    modelRec = "Stick to optimized 3B models (like Phi-3 or Qwen-1.5 4B) heavily quantized to Q4_K_M.";
-  } else {
-    hwAdvice = "Solid mid-tier performance. Your thermals and compute are healthy, but you may experience slowdowns at high context lengths.";
-    modelRec = "Your system handles 8B models (like Llama-3 8B) extremely well. Try a Q5 quantization for the optimal speed-to-intelligence ratio.";
-  }
 
   return (
     <>
       <header className="flex items-center justify-between border-b border-white/5 pb-6">
         <div>
           <h1 className="text-2xl font-medium text-white tracking-tight">Benchmark Result</h1>
-          <p className="text-sm text-neutral-400 mt-1">{dateStr} • OpenBench v1.0.0</p>
+          <p className="text-sm text-neutral-400 mt-1">{dateStr} • OpenBench v1.1.0</p>
         </div>
         <div className="flex gap-3 items-center">
           <Button variant="secondary" icon={exportingCard ? <Spinner className="animate-spin" /> : <Image />} onClick={handleExportScorecard} disabled={exportingCard}>
@@ -350,7 +355,10 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
               tabIndex={0}
               className="flex flex-col items-center justify-center w-20 h-20 rounded bg-white/5 border border-white/5 text-white flex-shrink-0 relative group cursor-help focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-[var(--color-surface)]"
             >
-              <span className="text-2xl font-mono tracking-tight">{result.score}{result.benchmark_type === "Intelligence (LLM-as-a-Judge)" ? "/5" : ""}</span>
+              <span className="text-2xl font-mono tracking-tight">
+                {result.score}
+                {INTELLIGENCE_TESTS.includes(result.benchmark_type || "") ? "/5" : ""}
+              </span>
               <div className="flex items-center gap-1 mt-0.5">
                 <span className="text-[9px] font-semibold text-neutral-500">Score</span>
                 <Info weight="bold" className="text-neutral-500 w-3 h-3" />
@@ -358,7 +366,7 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
               
               {/* Tooltip — visible on hover AND on focus */}
               <div className="absolute top-full right-0 mt-2 w-64 bg-neutral-900 border border-white/10 rounded-lg shadow-xl p-3 opacity-0 invisible group-hover:opacity-100 group-hover:visible group-focus:opacity-100 group-focus:visible transition-all z-50 text-left">
-                {result.benchmark_type === "Intelligence (LLM-as-a-Judge)" ? (
+                {INTELLIGENCE_TESTS.includes(result.benchmark_type || "") ? (
                   <p className="text-[10px] text-neutral-500 leading-relaxed">
                     Score given out of 5 by the designated LLM Judge.
                   </p>
@@ -366,10 +374,10 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
                   <>
                     <p className="text-xs text-neutral-300 font-medium mb-1">Score Calculation</p>
                     <code className="text-[10px] text-brand-400 block mb-2 bg-black/50 p-1.5 rounded font-mono">
-                      (TPS * 10) + (100 - Temp) - (VRAM * 5)
+                      Score ≈ Tokens Per Second (TPS)
                     </code>
                     <p className="text-[10px] text-neutral-500 leading-relaxed">
-                      The OpenBench score rewards generation speed and thermal efficiency, while penalizing heavy memory consumption.
+                      The OpenBench score is derived directly from the model's generation speed, providing a clean, universally recognized benchmark metric.
                     </p>
                   </>
                 )}
@@ -379,9 +387,17 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
         </div>
         
         {result.reasoning && (
-          <div className="px-8 pt-8">
-             <div className="flex flex-col gap-2 p-4 bg-white/5 border border-white/10 rounded-lg">
-                <span className="text-[10px] text-neutral-500  font-semibold">Judge's Reasoning</span>
+          <div className="px-8 pt-8 flex flex-col gap-4">
+             {result.prompt_metrics && result.prompt_metrics.length > 0 && (
+               <div className="flex flex-col gap-2 p-4 bg-white/5 border border-white/10 rounded-lg">
+                  <span className="text-[10px] text-neutral-500 font-semibold uppercase tracking-widest">Model's Raw Answer</span>
+                  <div className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto custom-scrollbar pr-2">
+                    {result.prompt_metrics[0].response}
+                  </div>
+               </div>
+             )}
+             <div className="flex flex-col gap-2 p-4 bg-brand-500/5 border border-brand-500/20 rounded-lg">
+                <span className="text-[10px] text-brand-400 font-semibold uppercase tracking-widest">Judge's Reasoning</span>
                 <p className="text-sm text-neutral-300 italic leading-relaxed">"{result.reasoning}"</p>
              </div>
           </div>
@@ -392,15 +408,51 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
           <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-5">
             <div className="flex flex-col gap-0.5">
               <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">Speed</dt>
-              <dd className="font-mono text-xl text-white tracking-tight">{result.speed.toFixed(1)} <span className="text-xs text-neutral-500 font-sans">tok/s</span></dd>
+              <dd className="font-mono text-xl text-white tracking-tight">{(result.speed ?? 0).toFixed(1)} <span className="text-xs text-neutral-500 font-sans">tok/s</span></dd>
             </div>
+            {result.tps_variance !== undefined && result.tps_variance > 0 && (
+              <div className="flex flex-col gap-0.5">
+                <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">TPS Variance</dt>
+                <dd className="font-mono text-xl text-neutral-300 tracking-tight">±{(result.tps_variance ?? 0).toFixed(1)} <span className="text-xs text-neutral-500 font-sans">σ</span></dd>
+              </div>
+            )}
+            {result.p90_latency_ms !== undefined && result.p90_latency_ms > 0 && (
+              <div className="flex flex-col gap-0.5">
+                <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">P90 Latency</dt>
+                <dd className="font-mono text-xl text-neutral-300 tracking-tight">{(result.p90_latency_ms ?? 0).toFixed(0)} <span className="text-xs text-neutral-500 font-sans">ms</span></dd>
+              </div>
+            )}
+            {result.tool_call_count !== undefined && result.tool_call_count !== null && (
+              <div className="flex flex-col gap-0.5">
+                <dt className="text-[10px] text-brand-500 font-semibold tracking-widest uppercase">Tool Calls</dt>
+                <dd className="font-mono text-xl text-brand-300 tracking-tight">{result.tool_call_count} <span className="text-xs text-brand-500/70 font-sans">invocations</span></dd>
+              </div>
+            )}
             <div className="flex flex-col gap-0.5">
               <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">Peak VRAM</dt>
-              <dd className="font-mono text-xl text-neutral-300 tracking-tight">{result.vram.toFixed(1)} <span className="text-xs text-neutral-500 font-sans">GB</span></dd>
+              <dd className="font-mono text-xl text-neutral-300 tracking-tight">{(result.vram ?? 0).toFixed(1)} <span className="text-xs text-neutral-500 font-sans">GB</span></dd>
             </div>
+            {result.ttft_ms !== undefined && (
+              <div className="flex flex-col gap-0.5">
+                <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">Avg TTFT</dt>
+                <dd className="font-mono text-xl text-neutral-300 tracking-tight">{(result.ttft_ms ?? 0).toFixed(0)} <span className="text-xs text-neutral-500 font-sans">ms</span></dd>
+              </div>
+            )}
+            {result.prefill_rate !== undefined && result.prefill_rate > 0 && (
+              <div className="flex flex-col gap-0.5">
+                <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">Prefill Rate</dt>
+                <dd className="font-mono text-xl text-neutral-300 tracking-tight">{(result.prefill_rate ?? 0).toFixed(1)} <span className="text-xs text-neutral-500 font-sans">tok/s</span></dd>
+              </div>
+            )}
+            {result.quant_level && (
+              <div className="flex flex-col gap-0.5">
+                <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">Quant</dt>
+                <dd className="font-mono text-xl text-neutral-300 tracking-tight">{result.quant_level}</dd>
+              </div>
+            )}
             <div className="flex flex-col gap-0.5">
               <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">Avg Temp</dt>
-              <dd className={cn("font-mono text-xl tracking-tight", result.temp > 80 ? "text-red-400" : "text-neutral-300")}>{result.temp.toFixed(0)} <span className="text-xs text-neutral-500 font-sans">°C</span></dd>
+              <dd className={cn("font-mono text-xl tracking-tight", (result.temp ?? 0) > 80 ? "text-red-400" : "text-neutral-300")}>{(result.temp ?? 0).toFixed(0)} <span className="text-xs text-neutral-500 font-sans">°C</span></dd>
             </div>
             <div className="flex flex-col gap-0.5">
               <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">Workload</dt>
@@ -432,7 +484,7 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
                     <td className="px-6 py-4 align-top">
                       <div className="flex flex-col gap-2">
                         <span className="inline-flex items-center w-fit px-2.5 py-1 rounded-md text-xs font-mono font-bold bg-brand-500/10 text-brand-300 border border-brand-500/20">
-                          {metric.tokens_per_sec.toFixed(1)} t/s
+                          {(metric.tokens_per_sec ?? 0).toFixed(1)} t/s
                         </span>
                         <div className="max-h-40 overflow-y-auto bg-black/20 p-2 rounded border border-white/5 custom-scrollbar">
                           <p className="text-xs text-neutral-400 whitespace-pre-wrap">{metric.response}</p>
@@ -447,21 +499,42 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
         </Card>
       )}
 
-      <div className="grid grid-cols-1 gap-6">
-        <Card innerClassName="p-6 flex flex-col gap-4">
-          <SectionHeader icon={<Wrench className="text-brand-500 w-5 h-5" />} title="Hardware Advisor" />
-          <p className="text-sm text-neutral-400 leading-relaxed">
-            {hwAdvice}
-          </p>
+      {settings?.detailed_telemetry && result.tps_history && result.tps_history.length > 0 && (
+        <Card innerClassName="p-6 flex flex-col gap-6">
+          <SectionHeader icon={<ChartLineUp className="text-brand-400 w-5 h-5" />} title="Historical Telemetry" />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="flex flex-col gap-2 h-48 bg-black/20 p-4 rounded-xl border border-white/5">
+              <span className="text-[10px] text-brand-400 font-bold tracking-widest uppercase">Throughput (TPS)</span>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={result.tps_history.map((tps) => ({ tps }))}>
+                  <Line type="monotone" dataKey="tps" stroke="#38bdf8" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <YAxis domain={['auto', 'auto']} hide />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="flex flex-col gap-2 h-48 bg-black/20 p-4 rounded-xl border border-white/5">
+              <span className="text-[10px] text-green-400 font-bold tracking-widest uppercase">VRAM Allocation</span>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={result.vram_history?.map((vram) => ({ vram })) || []}>
+                  <Line type="stepAfter" dataKey="vram" stroke="#4ade80" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <YAxis domain={[0, 'auto']} hide />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="flex flex-col gap-2 h-48 bg-black/20 p-4 rounded-xl border border-white/5">
+              <span className="text-[10px] text-orange-400 font-bold tracking-widest uppercase">GPU Temp</span>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={result.temp_history?.map((temp) => ({ temp })) || []}>
+                  <Line type="monotone" dataKey="temp" stroke="#fb923c" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <YAxis domain={[0, 100]} hide />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
         </Card>
-        
-        <Card innerClassName="p-6 flex flex-col gap-4">
-          <SectionHeader icon={<Lightbulb className="text-yellow-500 w-5 h-5" />} title="Model Recommendations" />
-          <p className="text-sm text-neutral-400 leading-relaxed">
-            {modelRec}
-          </p>
-        </Card>
-      </div>
+      )}
       
       {/* Hidden Scorecard for Export */}
       <div className="absolute opacity-0 pointer-events-none -z-50" style={{ left: 0, top: 0 }}>

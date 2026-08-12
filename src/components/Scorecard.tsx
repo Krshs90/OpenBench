@@ -1,13 +1,14 @@
 import React from "react";
 import { SavedResult } from "../types";
-import { Cpu, Thermometer, Database } from "@phosphor-icons/react";
+import { Cpu, Thermometer, Database, Timer, Lightning } from "@phosphor-icons/react";
 
 export const Scorecard = React.forwardRef<HTMLDivElement, { result: SavedResult }>(({ result }, ref) => {
   return (
     <div 
       ref={ref} 
-      className="w-[800px] h-[450px] relative overflow-hidden bg-neutral-950 flex flex-col justify-between p-12 select-none"
+      className="w-[800px] relative overflow-hidden bg-neutral-950 flex flex-col justify-between p-12 select-none"
       style={{
+        minHeight: "450px",
         backgroundImage: "radial-gradient(circle at 100% 100%, rgba(56, 189, 248, 0.15), transparent 50%), radial-gradient(circle at 0% 0%, rgba(99, 102, 241, 0.15), transparent 50%)",
         fontFamily: "'Inter', sans-serif"
       }}
@@ -45,7 +46,7 @@ export const Scorecard = React.forwardRef<HTMLDivElement, { result: SavedResult 
           <span className="text-neutral-400 text-sm font-medium mb-1">Inference Speed</span>
           <div className="flex items-baseline gap-2">
             <span className="text-6xl font-bold text-white tracking-tighter shadow-brand-500/50 drop-shadow-lg">
-              {result.speed.toFixed(1)}
+              {(result.speed ?? 0).toFixed(1)}
             </span>
             <span className="text-xl text-brand-400 font-medium">tokens/s</span>
           </div>
@@ -70,21 +71,38 @@ export const Scorecard = React.forwardRef<HTMLDivElement, { result: SavedResult 
         </div>
       </div>
 
+      {result.reasoning && (
+        <div className="relative z-10 mt-6 p-5 rounded-xl bg-black/40 border border-white/10 backdrop-blur-md">
+           <span className="text-brand-400 font-bold tracking-widest text-[10px] uppercase block mb-1.5">Judge's Reasoning</span>
+           <p className="text-sm text-neutral-300 leading-relaxed italic">
+             "{result.reasoning}"
+           </p>
+        </div>
+      )}
+
       {/* Footer Metrics */}
       <div className="relative z-10 mt-8 pt-6 border-t border-white/10 flex items-center justify-between text-neutral-400">
-        <div className="flex items-center gap-8">
+        <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
             <Database className="w-5 h-5 text-neutral-500" />
-            <span className="text-sm font-mono">{result.vram.toFixed(1)} GB VRAM</span>
+            <span className="text-sm font-mono">{(result.vram ?? 0).toFixed(1)}GB VRAM</span>
           </div>
           <div className="flex items-center gap-2">
             <Thermometer className="w-5 h-5 text-neutral-500" />
-            <span className="text-sm font-mono">{result.temp.toFixed(1)}°C</span>
+            <span className="text-sm font-mono">{(result.temp ?? 0).toFixed(1)}°C</span>
           </div>
-          <div className="flex items-center gap-2">
-            <Cpu className="w-5 h-5 text-neutral-500" />
-            <span className="text-sm font-mono">{(result.speed * 60).toFixed(0)} t/m</span>
-          </div>
+          {result.ttft_ms !== undefined && (
+            <div className="flex items-center gap-2">
+              <Timer className="w-5 h-5 text-neutral-500" />
+              <span className="text-sm font-mono">{(result.ttft_ms ?? 0).toFixed(0)}ms TTFT</span>
+            </div>
+          )}
+          {result.prefill_rate !== undefined && result.prefill_rate > 0 && (
+            <div className="flex items-center gap-2">
+              <Lightning className="w-5 h-5 text-neutral-500" />
+              <span className="text-sm font-mono">{(result.prefill_rate ?? 0).toFixed(1)}t/s Prefill</span>
+            </div>
+          )}
         </div>
         <div className="text-xs font-medium text-neutral-600">
           Generated on {new Date(result.timestamp * 1000).toLocaleDateString()}

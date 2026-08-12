@@ -76,6 +76,10 @@ export function Compare() {
   };
 
   const selectedResults = allResults.filter(r => selectedIds.includes(r.id));
+  const activeBenchmarkType = selectedResults.length > 0 ? selectedResults[0].benchmark_type : null;
+  const availableResults = activeBenchmarkType 
+    ? allResults.filter(r => r.benchmark_type === activeBenchmarkType)
+    : allResults;
   
   const maxSpeed = Math.max(...selectedResults.map(r => r.speed), 1);
   const maxVram = Math.max(...selectedResults.map(r => r.vram), 1);
@@ -176,9 +180,9 @@ export function Compare() {
               value=""
               onChange={toggleSelection}
               placeholder="Select Runs to add..."
-              options={allResults.map(r => ({
+              options={availableResults.map(r => ({
                 value: r.id,
-                label: `${r.model} (${r.score} pts)`,
+                label: `${r.model} (${r.score} pts) ${r.benchmark_type ? `[${r.benchmark_type}]` : ''}`,
                 description: `${r.workload || "Standard"} • ${new Date(r.timestamp * 1000).toLocaleDateString()}`
               }))}
             />

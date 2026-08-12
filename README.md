@@ -25,6 +25,11 @@
 
 <br />
 
+### Our Mission
+OpenBench is built for people of **any skill level** — from absolute beginners to advanced AI researchers. It is designed to be the ultimate, all-in-one destination to view statistics on how LLMs run on your specific hardware, test LLM knowledge and "smartness", and perform detailed statistical analysis of model performance.
+
+<br />
+
 <div align="center">
   <img src="Images/OpenBench%20Gif.gif" alt="OpenBench Demo" width="800" style="border-radius: 8px;"/>
 </div>
@@ -85,32 +90,29 @@ OpenBench doesn't just ask "say hi". We've engineered brutally difficult workloa
 
 ### Getting Started
 
-OpenBench requires **Node.js**, **Rust**, and a local LLM runner like **Ollama** installed on your system.
+OpenBench requires **Node.js**, the **Rust toolchain** (rustup + cargo), and a local LLM runner like **Ollama** installed on your system. Note that the Tauri CLI is a devDependency, so the Rust toolchain and [Tauri native prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites) must be present locally for your target OS.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/openbench.git
-cd openbench
+git clone https://github.com/Krshs90/OpenBench.git
+cd OpenBench
 
-# 2. Install frontend dependencies
+# 2. Install dependencies
 npm install
 
-# 3. Fire up the application
-npm run tauri dev
+# 3. To run the frontend only (web):
+npm run dev
+
+# 4. To run the full desktop app (requires Rust/cargo and Tauri prerequisites):
+npm run tauri -- dev
 ```
 
 <br />
 
-### The Scoring System
+### The Performance Index
 
-OpenBench calculates a proprietary performance score based on three critical vectors:
-1. **Speed:** Tokens per second (Heavy Weight)
-2. **Thermal Efficiency:** Average component temperatures (Medium Weight)
-3. **Memory Footprint:** Peak VRAM consumption (Penalty Weight)
-
-```javascript
-Score = (TPS * 10) + (100 - Temp) - (VRAM * 5)
-```
+OpenBench tracks a raw **Performance Index** for standard hardware workloads. To provide clear and transparent metrics, the generated Score maps approximately 1:1 with your raw token generation speed (`Tokens/Sec`), with very minor fractional penalties automatically applied if your GPU experiences excessive temperatures or VRAM usage. 
+For "Intelligence" workloads, OpenBench utilizes a powerful LLM-as-a-Judge architecture to grade models on a scale of 1-5 based on their reasoning, factual accuracy, and logic.
 
 <br />
 

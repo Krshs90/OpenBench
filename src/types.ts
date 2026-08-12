@@ -10,3 +10,9 @@ export interface LocalModel {
   status?: string;
   links?: string[];
 }
+
+export interface RunningModel {
+  name: string;
+  size: number;
+  size_vram: number;
+}
