@@ -1,9 +1,7 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Card, cn } from "../components/Card";
-import { Button } from "../components/Button";
 import { DownloadSimple, CheckCircle, Storefront, Spinner, Cpu, HardDrive } from "@phosphor-icons/react";
 import { invoke } from "@tauri-apps/api/core";
-import { LocalModel } from "../types";
 import { useGlobalCache } from "../context/GlobalCacheContext";
 
 interface MarketplaceModel {

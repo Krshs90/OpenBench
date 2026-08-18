@@ -11,34 +11,29 @@ import { cn } from "../components/Card";
 import { ChartLineUp } from "@phosphor-icons/react";
 import { SectionHeader } from "../components/SectionHeader";
 import { Dropdown } from "../components/Dropdown";
-import { INTELLIGENCE_TESTS } from "./Benchmark";
-import { LineChart, Line, YAxis, ResponsiveContainer } from "recharts";
+import { INTELLIGENCE_TESTS, LM_EVAL_TESTS } from "./Benchmark";
+import { LineChart, Line, YAxis, ResponsiveContainer, Tooltip } from "recharts";
+import { SavedResult } from "../types";
 
-interface SavedResult {
-  id: string;
-  model: string;
-  hardware: string;
-  speed: number;
-  vram: number;
-  temp: number;
-  ttft_ms?: number;
-  prefill_rate?: number;
-  gpu_platform?: string;
-  quant_level?: string;
-  score: number;
-  timestamp: number;
-  workload?: string;
-  benchmark_type?: string;
-  difficulty?: string;
-  reasoning?: string;
-  prompt_metrics?: { prompt: string; tokens_per_sec: number; response: string }[];
-  tps_variance?: number;
-  p90_latency_ms?: number;
-  tool_call_count?: number;
-  tps_history?: number[];
-  vram_history?: number[];
-  temp_history?: number[];
-}
+const TelemetryTooltip = ({ active, payload, unit }: any) => {
+  if (active && payload && payload.length) {
+    const dataPoint = payload[0];
+    const val = dataPoint.value;
+    return (
+      <div className="bg-neutral-900/95 backdrop-blur-md border border-white/15 px-3 py-1.5 rounded-lg shadow-2xl flex flex-col gap-0.5 pointer-events-none z-50">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dataPoint.stroke || dataPoint.color }} />
+          <span className="text-xs font-mono font-bold text-white">
+            {typeof val === "number" ? val.toFixed(1) : val}
+          </span>
+          <span className="text-[10px] text-neutral-400">{unit}</span>
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
 
 export function Results() {
   const [results, setResults] = useState<SavedResult[]>([]);
@@ -223,7 +218,7 @@ export function Results() {
               >
                 <ArrowLeft className="w-4 h-4" /> Back to History
               </button>
-              <ResultDetail result={activeResult} copied={copied} setCopied={setCopied} />
+              <ResultDetail result={activeResult} copied={copied} setCopied={setCopied} settings={settings} />
             </>
           )}
         </div>
@@ -232,7 +227,7 @@ export function Results() {
   );
 }
 
-function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copied: boolean, setCopied: (v: boolean) => void }) {
+function ResultDetail({ result, copied, setCopied, settings }: { result: SavedResult, copied: boolean, setCopied: (v: boolean) => void, settings: any }) {
   const dateStr = new Date(result.timestamp * 1000).toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
@@ -357,10 +352,12 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
             >
               <span className="text-2xl font-mono tracking-tight">
                 {result.score}
-                {INTELLIGENCE_TESTS.includes(result.benchmark_type || "") ? "/5" : ""}
+                {INTELLIGENCE_TESTS.includes(result.benchmark_type || "") ? "/5" : LM_EVAL_TESTS.includes(result.benchmark_type || "") ? "%" : ""}
               </span>
               <div className="flex items-center gap-1 mt-0.5">
-                <span className="text-[9px] font-semibold text-neutral-500">Score</span>
+                <span className="text-[9px] font-semibold text-neutral-500">
+                  {LM_EVAL_TESTS.includes(result.benchmark_type || "") ? "Accuracy" : "Score"}
+                </span>
                 <Info weight="bold" className="text-neutral-500 w-3 h-3" />
               </div>
               
@@ -369,6 +366,10 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
                 {INTELLIGENCE_TESTS.includes(result.benchmark_type || "") ? (
                   <p className="text-[10px] text-neutral-500 leading-relaxed">
                     Score given out of 5 by the designated LLM Judge.
+                  </p>
+                ) : LM_EVAL_TESTS.includes(result.benchmark_type || "") ? (
+                  <p className="text-[10px] text-neutral-500 leading-relaxed">
+                    Standardized Accuracy percentage achieved across all evaluated questions in this benchmark.
                   </p>
                 ) : (
                   <>
@@ -396,10 +397,167 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
                   </div>
                </div>
              )}
-             <div className="flex flex-col gap-2 p-4 bg-brand-500/5 border border-brand-500/20 rounded-lg">
-                <span className="text-[10px] text-brand-400 font-semibold uppercase tracking-widest">Judge's Reasoning</span>
-                <p className="text-sm text-neutral-300 italic leading-relaxed">"{result.reasoning}"</p>
-             </div>
+             {result.reasoning.startsWith("{") ? (
+               <div className="flex flex-col gap-3 p-5 bg-brand-500/5 border border-brand-500/20 rounded-xl">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-brand-400 font-semibold uppercase tracking-widest">Benchmark Evaluation Breakdown</span>
+                    <span className="text-xs text-brand-300 font-mono bg-brand-500/10 px-2.5 py-0.5 rounded-full border border-brand-500/20 font-bold">
+                      {result.score}% Overall Accuracy
+                    </span>
+                  </div>
+
+                  {(() => {
+                    try {
+                      const parsed = JSON.parse(result.reasoning);
+                      const rawEntries = parsed.raw && typeof parsed.raw === "object" ? Object.entries(parsed.raw) : [];
+
+                      return (
+                        <div className="flex flex-col gap-4 mt-1">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-black/40 p-3 rounded-lg border border-white/5 text-xs text-neutral-300">
+                            <div className="flex flex-col"><span className="text-[10px] text-neutral-500">Benchmark Task</span><span className="font-mono text-white font-medium">{parsed.task || result.benchmark_type || "N/A"}</span></div>
+                            <div className="flex flex-col"><span className="text-[10px] text-neutral-500">Accuracy Score</span><span className="font-mono text-brand-400 font-bold">{parsed.acc !== undefined ? `${(parsed.acc * 100).toFixed(1)}%` : `${result.score}%`}</span></div>
+                            <div className="flex flex-col"><span className="text-[10px] text-neutral-500">Exact Match Rate</span><span className="font-mono text-neutral-200">{parsed.exact_match !== undefined ? `${(parsed.exact_match * 100).toFixed(1)}%` : "N/A"}</span></div>
+                            <div className="flex flex-col"><span className="text-[10px] text-neutral-500">Sample Depth</span><span className="font-mono text-neutral-200">{result.difficulty || "Custom"}</span></div>
+                          </div>
+
+                          {rawEntries.length > 0 && (
+                            <div className="flex flex-col gap-2">
+                              <span className="text-[10px] text-neutral-400 font-semibold uppercase tracking-wider">Subject & Question Breakdown</span>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                                {rawEntries.map(([key, val]: [string, any]) => {
+                                  if (!val || typeof val !== "object") return null;
+                                  const subName = val.alias || val.name || key.replace(/^(mmlu_pro_|agieval_)/, '').replace(/_/g, ' ');
+                                  const subScore = val["exact_match,custom-extract"] ?? val["exact_match,strict-match"] ?? val["exact_match,flexible-extract"] ?? val["acc,none"] ?? val["exact_match"] ?? val["acc"] ?? val["rouge2_acc,none"] ?? 0;
+                                  const sampleLen = val.sample_len ?? 1;
+                                  const isPass = subScore > 0;
+
+                                  return (
+                                    <div key={key} className={cn("p-2.5 rounded-lg border flex items-center justify-between transition-colors", isPass ? "bg-green-500/10 border-green-500/30" : "bg-white/[0.03] border-white/5")}>
+                                      <div className="flex flex-col overflow-hidden mr-2">
+                                        <span className="text-xs text-white capitalize font-medium truncate" title={subName}>{subName}</span>
+                                        <span className="text-[10px] text-neutral-500 font-mono">{sampleLen} {sampleLen === 1 ? "question" : "questions"}</span>
+                                      </div>
+                                      <span className={cn("text-[10px] font-mono font-bold px-2 py-0.5 rounded flex-shrink-0", isPass ? "bg-green-500/20 text-green-300" : "bg-red-500/20 text-red-300")}>
+                                        {isPass ? `${(subScore * 100).toFixed(0)}% Correct` : "Incorrect"}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {parsed.samples && Array.isArray(parsed.samples) && parsed.samples.length > 0 && (
+                            <div className="flex flex-col gap-3 pt-3 border-t border-white/10">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-neutral-300 font-semibold uppercase tracking-wider flex items-center gap-2">
+                                  <span className="w-2 h-2 rounded-full bg-brand-400" />
+                                  Question-by-Question Deep Dive ({parsed.samples.length} questions evaluated)
+                                </span>
+                                <span className="text-[10px] text-neutral-500 font-mono">Detailed Analysis</span>
+                              </div>
+
+                              <div className="flex flex-col gap-3">
+                                {parsed.samples.map((s: any, idx: number) => {
+                                  const isCorrect = Boolean(s.is_correct);
+                                  return (
+                                    <div 
+                                      key={idx} 
+                                      className={cn(
+                                        "p-4 rounded-xl border flex flex-col gap-3 transition-all",
+                                        isCorrect 
+                                          ? "bg-green-500/[0.04] border-green-500/20 hover:border-green-500/40" 
+                                          : "bg-red-500/[0.04] border-red-500/20 hover:border-red-500/40"
+                                      )}
+                                    >
+                                      {/* Header: Question Number, Subject & Result Status */}
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs font-mono font-bold text-white bg-white/10 px-2 py-0.5 rounded">
+                                            Q{idx + 1}
+                                          </span>
+                                          {s.subject && (
+                                            <span className="text-xs text-neutral-400 capitalize bg-white/5 px-2 py-0.5 rounded border border-white/5 font-medium">
+                                              {s.subject}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span className={cn(
+                                          "text-xs font-mono font-bold px-2.5 py-0.5 rounded-full border",
+                                          isCorrect 
+                                            ? "bg-green-500/20 border-green-500/30 text-green-300" 
+                                            : "bg-red-500/20 border-red-500/30 text-red-300"
+                                        )}>
+                                          {isCorrect ? "✓ Correct / Match" : "✗ Incorrect / Mismatch"}
+                                        </span>
+                                      </div>
+
+                                      {/* Question Text */}
+                                      <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] uppercase tracking-wider font-semibold text-neutral-400">Question Asked</span>
+                                        <div className="text-xs text-neutral-200 bg-black/40 p-3 rounded-lg border border-white/5 whitespace-pre-wrap font-sans leading-relaxed">
+                                          {s.question}
+                                        </div>
+                                      </div>
+
+                                      {/* Answers Comparison */}
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        {/* Model Output */}
+                                        <div className="flex flex-col gap-1">
+                                          <div className="flex items-center justify-between">
+                                            <span className="text-[10px] uppercase tracking-wider font-semibold text-neutral-400">Model's Given Answer</span>
+                                            <span className={cn("text-[10px] font-mono", isCorrect ? "text-green-400" : "text-red-400")}>
+                                              {isCorrect ? "Validated Output" : "Failed Output"}
+                                            </span>
+                                          </div>
+                                          <div className={cn(
+                                            "text-xs p-3 rounded-lg border whitespace-pre-wrap font-mono max-h-48 overflow-y-auto custom-scrollbar leading-relaxed",
+                                            isCorrect 
+                                              ? "bg-green-950/20 border-green-500/20 text-green-200" 
+                                              : "bg-red-950/20 border-red-500/20 text-red-200"
+                                          )}>
+                                            {s.model_response || "(Empty response generated)"}
+                                          </div>
+                                        </div>
+
+                                        {/* Ground Truth Target */}
+                                        <div className="flex flex-col gap-1">
+                                          <div className="flex items-center justify-between">
+                                            <span className="text-[10px] uppercase tracking-wider font-semibold text-neutral-400">Expected Ground Truth Answer</span>
+                                            <span className="text-[10px] font-mono text-brand-400">Target Standard</span>
+                                          </div>
+                                          <div className="text-xs bg-brand-950/20 border border-brand-500/20 text-brand-200 p-3 rounded-lg whitespace-pre-wrap font-mono max-h-48 overflow-y-auto custom-scrollbar leading-relaxed">
+                                            {s.target || "N/A"}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Why It Failed / Evaluation Critique */}
+                                      {!isCorrect && (
+                                        <div className="flex items-start gap-2 p-2.5 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-300 leading-relaxed">
+                                          <span className="font-bold flex-shrink-0">Critique:</span>
+                                          <span>The model's output did not match the expected ground truth solution or target extraction criteria.</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    } catch {
+                      return <p className="text-xs text-neutral-400 italic leading-relaxed">{result.reasoning}</p>;
+                    }
+                  })()}
+               </div>
+             ) : (
+               <div className="flex flex-col gap-2 p-4 bg-brand-500/5 border border-brand-500/20 rounded-lg">
+                  <span className="text-[10px] text-brand-400 font-semibold uppercase tracking-widest">Judge's Reasoning</span>
+                  <p className="text-sm text-neutral-300 italic leading-relaxed">"{result.reasoning}"</p>
+               </div>
+             )}
           </div>
         )}
         
@@ -407,8 +565,17 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
         <div className="border-t border-white/5 px-8 py-5">
           <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-5">
             <div className="flex flex-col gap-0.5">
-              <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">Speed</dt>
-              <dd className="font-mono text-xl text-white tracking-tight">{(result.speed ?? 0).toFixed(1)} <span className="text-xs text-neutral-500 font-sans">tok/s</span></dd>
+              <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">
+                {LM_EVAL_TESTS.includes(result.benchmark_type || "") ? "Accuracy" : "Speed"}
+              </dt>
+              <dd className="font-mono text-xl text-white tracking-tight">
+                {LM_EVAL_TESTS.includes(result.benchmark_type || "") 
+                  ? `${result.score}%` 
+                  : (result.speed ?? 0).toFixed(1)} 
+                <span className="text-xs text-neutral-500 font-sans">
+                  {LM_EVAL_TESTS.includes(result.benchmark_type || "") ? " accuracy" : " tok/s"}
+                </span>
+              </dd>
             </div>
             {result.tps_variance !== undefined && result.tps_variance > 0 && (
               <div className="flex flex-col gap-0.5">
@@ -430,9 +597,11 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
             )}
             <div className="flex flex-col gap-0.5">
               <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">Peak VRAM</dt>
-              <dd className="font-mono text-xl text-neutral-300 tracking-tight">{(result.vram ?? 0).toFixed(1)} <span className="text-xs text-neutral-500 font-sans">GB</span></dd>
+              <dd className="font-mono text-xl text-neutral-300 tracking-tight">
+                {(result.vram ?? 0) > 0 ? `${(result.vram ?? 0).toFixed(1)} GB` : "Dynamic"}
+              </dd>
             </div>
-            {result.ttft_ms !== undefined && (
+            {result.ttft_ms !== undefined && result.ttft_ms > 0 && (
               <div className="flex flex-col gap-0.5">
                 <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">Avg TTFT</dt>
                 <dd className="font-mono text-xl text-neutral-300 tracking-tight">{(result.ttft_ms ?? 0).toFixed(0)} <span className="text-xs text-neutral-500 font-sans">ms</span></dd>
@@ -452,11 +621,13 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
             )}
             <div className="flex flex-col gap-0.5">
               <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">Avg Temp</dt>
-              <dd className={cn("font-mono text-xl tracking-tight", (result.temp ?? 0) > 80 ? "text-red-400" : "text-neutral-300")}>{(result.temp ?? 0).toFixed(0)} <span className="text-xs text-neutral-500 font-sans">°C</span></dd>
+              <dd className={cn("font-mono text-xl tracking-tight", (result.temp ?? 0) > 80 ? "text-red-400" : "text-neutral-300")}>
+                {(result.temp ?? 0) > 0 ? `${(result.temp ?? 0).toFixed(0)} °C` : "Optimal"}
+              </dd>
             </div>
             <div className="flex flex-col gap-0.5">
               <dt className="text-[10px] text-neutral-500 font-semibold tracking-widest uppercase">Workload</dt>
-              <dd className="text-sm text-neutral-300 truncate">{result.workload || "Medium"}</dd>
+              <dd className="text-sm text-neutral-300 truncate">{result.benchmark_type || result.workload || "Standard"}</dd>
             </div>
           </dl>
         </div>
@@ -507,7 +678,8 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
               <span className="text-[10px] text-brand-400 font-bold tracking-widest uppercase">Throughput (TPS)</span>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={result.tps_history.map((tps) => ({ tps }))}>
-                  <Line type="monotone" dataKey="tps" stroke="#38bdf8" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <Tooltip content={<TelemetryTooltip unit="t/s" />} cursor={{ stroke: 'rgba(56, 189, 248, 0.2)', strokeDasharray: '3 3' }} />
+                  <Line type="monotone" dataKey="tps" stroke="#38bdf8" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#38bdf8', stroke: '#fff', strokeWidth: 1.5 }} isAnimationActive={false} />
                   <YAxis domain={['auto', 'auto']} hide />
                 </LineChart>
               </ResponsiveContainer>
@@ -517,7 +689,8 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
               <span className="text-[10px] text-green-400 font-bold tracking-widest uppercase">VRAM Allocation</span>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={result.vram_history?.map((vram) => ({ vram })) || []}>
-                  <Line type="stepAfter" dataKey="vram" stroke="#4ade80" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <Tooltip content={<TelemetryTooltip unit="GB" />} cursor={{ stroke: 'rgba(74, 222, 128, 0.2)', strokeDasharray: '3 3' }} />
+                  <Line type="stepAfter" dataKey="vram" stroke="#4ade80" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#4ade80', stroke: '#fff', strokeWidth: 1.5 }} isAnimationActive={false} />
                   <YAxis domain={[0, 'auto']} hide />
                 </LineChart>
               </ResponsiveContainer>
@@ -527,7 +700,8 @@ function ResultDetail({ result, copied, setCopied }: { result: SavedResult, copi
               <span className="text-[10px] text-orange-400 font-bold tracking-widest uppercase">GPU Temp</span>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={result.temp_history?.map((temp) => ({ temp })) || []}>
-                  <Line type="monotone" dataKey="temp" stroke="#fb923c" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <Tooltip content={<TelemetryTooltip unit="°C" />} cursor={{ stroke: 'rgba(251, 146, 60, 0.2)', strokeDasharray: '3 3' }} />
+                  <Line type="monotone" dataKey="temp" stroke="#fb923c" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#fb923c', stroke: '#fff', strokeWidth: 1.5 }} isAnimationActive={false} />
                   <YAxis domain={[0, 100]} hide />
                 </LineChart>
               </ResponsiveContainer>

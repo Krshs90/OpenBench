@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { Card, cn } from "../components/Card";
 import { Button } from "../components/Button";
-import { Play, Cpu, HardDrive, Trash, Medal, ChartLineUp, Spinner } from "@phosphor-icons/react";
+import { Play, Cpu, HardDrive, Medal, ChartLineUp, Spinner } from "@phosphor-icons/react";
 import { Link } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { useBenchmark } from "../context/BenchmarkContext";
 import { INTELLIGENCE_TESTS } from "./Benchmark";
+import { SavedResult } from "../types";
 
 interface SystemInfo {
   cpu_name: string;
@@ -21,17 +22,6 @@ interface LiveTelemetry {
   vram_usage_gb: number;
 }
 
-interface SavedResult {
-  id: string;
-  model: string;
-  hardware: string;
-  speed: number;
-  vram: number;
-  temp: number;
-  score: number;
-  timestamp: number;
-  workload: string;
-}
 
 export function Home() {
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
@@ -51,15 +41,6 @@ export function Home() {
 
   const loadResults = () => {
     invoke<SavedResult[]>("get_saved_results").then(setResults).catch(console.error);
-  };
-
-  const deleteResult = async (id: string) => {
-    try {
-      await invoke("delete_result", { id });
-      loadResults();
-    } catch (e) {
-      console.error(e);
-    }
   };
 
   return (

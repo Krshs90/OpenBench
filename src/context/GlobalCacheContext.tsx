@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { LocalModel, RunningModel } from "../types";
 
@@ -20,13 +20,13 @@ export function GlobalCacheProvider({ children }: { children: ReactNode }) {
   const [loadingModels, setLoadingModels] = useState(true);
   const [ollamaVersion, setOllamaVersion] = useState<string>("");
   const [latestOllama, setLatestOllama] = useState<string>("");
-  const [lastFetched, setLastFetched] = useState<number>(0);
+  const lastFetchedRef = useRef<number>(0);
 
   const CACHE_DURATION = 60000; // 60 seconds
 
   const refreshModels = useCallback(async (force = false) => {
     const now = Date.now();
-    if (!force && now - lastFetched < CACHE_DURATION && models.length > 0) {
+    if (!force && now - lastFetchedRef.current < CACHE_DURATION && lastFetchedRef.current > 0) {
       // Use cached data
       setLoadingModels(false);
       return;
@@ -36,7 +36,7 @@ export function GlobalCacheProvider({ children }: { children: ReactNode }) {
     try {
       const result = await invoke<LocalModel[]>("get_local_models");
       setModels(result);
-      setLastFetched(Date.now());
+      lastFetchedRef.current = Date.now();
       
       const localVersion = await invoke<string>("get_ollama_version");
       setOllamaVersion(localVersion.replace("v", ""));
@@ -55,7 +55,7 @@ export function GlobalCacheProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoadingModels(false);
     }
-  }, [lastFetched, models.length]);
+  }, []); // Empty deps — uses ref for lastFetched to avoid recreation on every fetch
 
   const refreshRunningModels = useCallback(async () => {
     try {

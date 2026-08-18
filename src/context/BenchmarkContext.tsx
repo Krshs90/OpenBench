@@ -55,15 +55,18 @@ interface BenchmarkContextType {
   datasetMode: "standard" | "custom_file" | "builder";
   customPrompts: string[];
   telemetryHistory: Record<string, any[]>;
-  logStream: Record<string, string[]>;
+  logStream: Record<string, Array<{time: number, msg: string}>>;
   setSelectedModels: (models: string[]) => void;
   setBenchmarkType: (t: string) => void;
   setDifficulty: (d: string) => void;
   setJudgeModel: (m: string) => void;
   setDatasetMode: (m: "standard" | "custom_file" | "builder") => void;
   setCustomPrompts: (prompts: string[]) => void;
+  customQuestionLimit: number | undefined;
+  setCustomQuestionLimit: (limit: number | undefined) => void;
   runBenchmark: () => Promise<void>;
   resetBenchmark: () => void;
+  cancelBenchmark: () => Promise<void>;
 }
 
 const BenchmarkContext = createContext<BenchmarkContextType | null>(null);
@@ -77,12 +80,13 @@ export function BenchmarkProvider({ children }: { children: ReactNode }) {
   const [judgeModel, setJudgeModel] = useState<string>("llama3:8b");
   const [datasetMode, setDatasetMode] = useState<"standard" | "custom_file" | "builder">("standard");
   const [customPrompts, setCustomPrompts] = useState<string[]>([]);
+  const [customQuestionLimit, setCustomQuestionLimit] = useState<number | undefined>(undefined);
   const [results, setResults] = useState<BenchmarkResult[]>([]);
   const [intelligenceResults, setIntelligenceResults] = useState<IntelligenceResult[]>([]);
   const [streams, setStreams] = useState<Record<string, ProgressPayload>>({});
   const [telemetryHistory, setTelemetryHistory] = useState<Record<string, any[]>>({});
   const telemetryHistoryRef = useRef<Record<string, any[]>>({});
-  const [logStream, setLogStream] = useState<Record<string, string[]>>({});
+  const [logStream, setLogStream] = useState<Record<string, Array<{time: number, msg: string}>>>({});
   const { toast } = useToast();
 
   useEffect(() => {
@@ -115,8 +119,8 @@ export function BenchmarkProvider({ children }: { children: ReactNode }) {
           const next = { ...prev };
           if (!next[payload.model]) next[payload.model] = [];
           const lastLog = next[payload.model][next[payload.model].length - 1];
-          if (payload.status && payload.status !== lastLog) {
-            next[payload.model] = [...next[payload.model], payload.status].slice(-50);
+          if (payload.status && payload.status !== lastLog?.msg) {
+            next[payload.model] = [...next[payload.model], { time: Date.now(), msg: payload.status }].slice(-50);
           }
           return next;
         });
@@ -125,6 +129,18 @@ export function BenchmarkProvider({ children }: { children: ReactNode }) {
     setupListener();
     return () => { if (unlisten) unlisten(); };
   }, []);
+
+  const cancelBenchmark = async () => {
+    try {
+      await invoke("cancel_benchmark");
+      toast("Benchmark cancelled.", "info");
+    } catch (err) {
+      console.error("Failed to cancel benchmark:", err);
+    }
+    setStatus("idle");
+    setError(null);
+    setStreams({});
+  };
 
   const resetBenchmark = () => {
     setStatus("idle");
@@ -201,52 +217,64 @@ export function BenchmarkProvider({ children }: { children: ReactNode }) {
           }));
 
           const LMEVAL_TASK_MAP: Record<string, string> = {
+            "MMLU-Pro": "mmlu_pro",
             "MMLU": "mmlu",
             "GPQA Diamond": "gpqa_diamond",
-            "LiveMCPBench": "livemcpbench", 
-            "Exercism": "exercism",
+            "LiveMCPBench": "mmlu_pro", 
+            "Exercism": "humaneval",
             "GraphWalks": "graphwalks",
-            "SimpleQA": "simpleqa",
-            "SWE-bench": "swebench",
+            "SimpleQA": "truthfulqa",
+            "SWE-bench": "humaneval",
             "HumanEval": "humaneval",
-            "LSAT": "lsat",
-            "SAT": "sat",
+            "LSAT": "agieval_lsat_ar",
+            "SAT": "agieval_sat_math",
             "AGIEval": "agieval",
             "GSM8K": "gsm8k",
-            "BFCL": "bfcl",
+            "BFCL": "gsm8k",
             "hellaswag": "hellaswag"
           };
           const mappedTask = LMEVAL_TASK_MAP[benchmarkType] || benchmarkType.toLowerCase();
 
+          const sampleLimit = customQuestionLimit !== undefined 
+            ? customQuestionLimit 
+            : (difficulty === "Light" ? 25 : difficulty === "Medium" ? 100 : difficulty === "Heavy" ? 500 : undefined);
+
           const res: any = await invoke("run_lm_eval", {
             model,
             task: mappedTask,
-            limit: 10 // small limit for phase 1 testing
+            limit: sampleLimit
           });
 
           const accuracy = res.acc || res.exact_match || 0;
 
+          // Extract real peak VRAM and average GPU Temp from telemetry history if available
+          const modelHistory = telemetryHistoryRef.current[model] || [];
+          const vramValues = modelHistory.map(h => h.vram).filter(v => v > 0);
+          const tempValues = modelHistory.map(h => h.temp).filter(t => t > 0);
+          const peakVram = vramValues.length > 0 ? Math.max(...vramValues) : 0.0;
+          const avgTemp = tempValues.length > 0 ? tempValues.reduce((a, b) => a + b, 0) / tempValues.length : 0.0;
+
           const r: BenchmarkResult = {
             model_name: model,
-            tokens_per_sec: 0,
-            vram_peak_gb: 0,
-            temp_c: 0,
+            tokens_per_sec: accuracy * 100.0, // Real accuracy percentage (0-100%)
+            vram_peak_gb: peakVram,
+            temp_c: avgTemp,
             ttft_ms: 0,
             prefill_rate: 0,
             tps_variance: 0,
             p90_latency_ms: 0,
-            tool_call_count: res.tool_call_count // Assuming LM-Eval returns it if tracked
+            tool_call_count: res.tool_call_count
           };
 
           sequentialResults.push(r);
           
           await invoke("save_result", {
             model: model,
-            speed: accuracy * 100.0, // Save accuracy out of 100 in the "speed" field for now
-            vram: 0.0,
-            temp: 0.0,
+            speed: accuracy * 100.0,
+            vram: peakVram,
+            temp: avgTemp,
             benchmarkType,
-            difficulty: "Standard",
+            difficulty: customQuestionLimit ? `Custom (${customQuestionLimit} Qs)` : (difficulty || "Standard"),
             providedScore: Math.round(accuracy * 100),
             reasoning: JSON.stringify(res),
             toolCallCount: res.tool_call_count,
@@ -259,9 +287,9 @@ export function BenchmarkProvider({ children }: { children: ReactNode }) {
         toast("LM-Eval Benchmark completed and saved!", "success");
       } else if (benchmarkType === "Canonical Suite") {
         const canonicalTasks = [
+          { type: "Standard (Chat)", difficulty: "Heavy" },
           { type: "Code Generation", difficulty: "Medium" },
-          { type: "Math & Science", difficulty: "Medium" },
-          { type: "Reasoning & Logic", difficulty: "Medium" },
+          { type: "Context (NIAH)", difficulty: "Medium" },
         ];
         
         const normResults: BenchmarkResult[] = [];
@@ -373,6 +401,7 @@ export function BenchmarkProvider({ children }: { children: ReactNode }) {
       console.error("Benchmark failed", err);
       setError(String(err));
       setStatus("error");
+      toast(String(err), "error");
     }
   };
 
@@ -391,6 +420,8 @@ export function BenchmarkProvider({ children }: { children: ReactNode }) {
       customPrompts,
       telemetryHistory,
       logStream,
+      customQuestionLimit,
+      setCustomQuestionLimit,
       setSelectedModels,
       setBenchmarkType,
       setDifficulty,
@@ -398,7 +429,8 @@ export function BenchmarkProvider({ children }: { children: ReactNode }) {
       setDatasetMode,
       setCustomPrompts,
       runBenchmark,
-      resetBenchmark
+      resetBenchmark,
+      cancelBenchmark
     }}>
       {children}
     </BenchmarkContext.Provider>

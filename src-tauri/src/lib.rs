@@ -262,7 +262,7 @@ fn get_nvidia_telemetry() -> (f64, f64) {
     (0.0, 0.0)
 }
 
-async fn run_single_benchmark(window: Window, model_name: String, benchmark_type: String, prompt: String, engine: String, endpoint: String) -> Result<BenchmarkResult, String> {
+async fn run_single_benchmark(window: Window, model_name: String, _benchmark_type: String, prompt: String, engine: String, endpoint: String) -> Result<BenchmarkResult, String> {
     let _ = window.emit("benchmark-progress", ProgressPayload {
         model: model_name.clone(),
         status: "Warming up engine...".to_string(),
@@ -276,6 +276,7 @@ async fn run_single_benchmark(window: Window, model_name: String, benchmark_type
 
     let client = reqwest::Client::new();
     let start = Instant::now();
+    let mut gen_start = start; // Updated after Ollama preload so TPS excludes model load time
     
     let mut stream = if engine == "Ollama" {
         let _ = window.emit("benchmark-progress", ProgressPayload {
@@ -292,6 +293,7 @@ async fn run_single_benchmark(window: Window, model_name: String, benchmark_type
             "keep_alive": "5m"
         });
         let _ = client.post("http://localhost:11434/api/generate").json(&preload_body).send().await;
+        gen_start = Instant::now(); // Start timing after preload completes
             
         let _ = window.emit("benchmark-progress", ProgressPayload {
             model: model_name.clone(),
@@ -305,7 +307,11 @@ async fn run_single_benchmark(window: Window, model_name: String, benchmark_type
         let req_body = serde_json::json!({
             "model": model_name,
             "prompt": prompt,
-            "stream": true
+            "stream": true,
+            "options": {
+                "num_predict": 1024,
+                "temperature": 0.2
+            }
         });
 
         let res = client.post("http://localhost:11434/api/generate")
@@ -322,7 +328,9 @@ async fn run_single_benchmark(window: Window, model_name: String, benchmark_type
         let req_body = serde_json::json!({
             "model": model_name,
             "messages": [{"role": "user", "content": prompt}],
-            "stream": true
+            "stream": true,
+            "max_tokens": 1024,
+            "temperature": 0.2
         });
         
         let url = format!("{}/chat/completions", endpoint.trim_end_matches('/'));
@@ -346,7 +354,7 @@ async fn run_single_benchmark(window: Window, model_name: String, benchmark_type
     let mut last_emit = Instant::now();
     let mut last_tokens: u64 = 0;
     
-    let mut custom_endpoint_token_estimate: u64 = 0;
+
 
     while let Some(chunk_res) = stream.next().await {
         if CANCEL_FLAG.load(Ordering::SeqCst) {
@@ -362,7 +370,7 @@ async fn run_single_benchmark(window: Window, model_name: String, benchmark_type
                 if let Ok(val) = serde_json::from_str::<Value>(line) {
                     if let Some(word) = val.get("response").and_then(|v| v.as_str()) {
                         if !word.is_empty() && first_token_time.is_none() {
-                            first_token_time = Some(start.elapsed().as_secs_f64());
+                            first_token_time = Some(gen_start.elapsed().as_secs_f64());
                             let _ = window.emit("benchmark-progress", ProgressPayload {
                                 model: model_name.clone(),
                                 status: format!("TTFT: {:.2}s. Generating...", first_token_time.unwrap()),
@@ -391,7 +399,7 @@ async fn run_single_benchmark(window: Window, model_name: String, benchmark_type
                         if let Some(delta) = choices.get(0).and_then(|c| c.get("delta")) {
                             if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                                 if !content.is_empty() && first_token_time.is_none() {
-                                    first_token_time = Some(start.elapsed().as_secs_f64());
+                                    first_token_time = Some(gen_start.elapsed().as_secs_f64());
                                     let _ = window.emit("benchmark-progress", ProgressPayload {
                                         model: model_name.clone(),
                                         status: format!("TTFT: {:.2}s. Generating...", first_token_time.unwrap()),
@@ -402,7 +410,6 @@ async fn run_single_benchmark(window: Window, model_name: String, benchmark_type
                                     });
                                 }
                                 if !content.is_empty() { 
-                                    custom_endpoint_token_estimate += 1;
                                     tokens += 1; 
                                     full_response.push_str(content);
                                 }
@@ -446,7 +453,7 @@ async fn run_single_benchmark(window: Window, model_name: String, benchmark_type
         }
     }
 
-    let duration = start.elapsed().as_secs_f64();
+    let duration = gen_start.elapsed().as_secs_f64();
     let final_tps = tokens as f64 / duration.max(0.1);
     
     let (vram, temp) = get_nvidia_telemetry();
@@ -470,7 +477,7 @@ async fn run_single_benchmark(window: Window, model_name: String, benchmark_type
         temp_c: peak_temp,
         response_text: Some(full_response),
         prompt_metrics: None,
-        ttft_ms: 0.0,
+        ttft_ms: first_token_time.map(|t| t * 1000.0).unwrap_or(0.0),
         prefill_rate: 0.0,
         tps_variance: 0.0,
         p90_latency_ms: 0.0,
@@ -541,6 +548,7 @@ async fn run_benchmark(
             let mut total_tps = 0.0;
             let mut peak_vram = 0.0;
             let mut peak_temp = 0.0;
+            let mut total_ttft = 0.0;
             let mut full_responses = Vec::new();
             let mut prompt_metrics = Vec::new();
             
@@ -556,6 +564,7 @@ async fn run_benchmark(
                 
                 let res = run_single_benchmark(w.clone(), model.clone(), bt.clone(), p.clone(), engine.clone(), endpoint.clone()).await?;
                 total_tps += res.tokens_per_sec;
+                total_ttft += res.ttft_ms;
                 if res.vram_peak_gb > peak_vram { peak_vram = res.vram_peak_gb; }
                 if res.temp_c > peak_temp { peak_temp = res.temp_c; }
                 
@@ -570,18 +579,19 @@ async fn run_benchmark(
             }
             
             let avg_tps = total_tps / p_list.len() as f64;
+            let avg_ttft = total_ttft / p_list.len() as f64;
             Ok::<BenchmarkResult, String>(BenchmarkResult {
                 model_name: model.clone(),
                 tokens_per_sec: avg_tps,
                 vram_peak_gb: peak_vram,
                 temp_c: peak_temp,
-                ttft_ms: 0.0,
+                ttft_ms: avg_ttft,
                 prefill_rate: 0.0,
                 response_text: Some(full_responses.join("\n---\n")),
                 prompt_metrics: Some(prompt_metrics),
                 tps_variance: 0.0,
                 p90_latency_ms: 0.0,
-                tool_call_count: None, // Hard to capture exact tool counts without intercepting responses manually, so null for now in base rust engine
+                tool_call_count: None,
             })
         }));
     }
@@ -1062,8 +1072,32 @@ async fn run_intelligence_benchmark(
 
 
 #[tauri::command]
+async fn unload_all_models() -> Result<(), String> {
+    let client = reqwest::Client::new();
+    if let Ok(res) = client.get("http://localhost:11434/api/ps").send().await {
+        if let Ok(json) = res.json::<serde_json::Value>().await {
+            if let Some(models) = json.get("models").and_then(|m| m.as_array()) {
+                for m in models {
+                    if let Some(name) = m.get("name").and_then(|n| n.as_str()) {
+                        let _ = client.post("http://localhost:11434/api/generate")
+                            .json(&serde_json::json!({
+                                "model": name,
+                                "keep_alive": 0
+                            }))
+                            .send()
+                            .await;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn cancel_benchmark() {
     CANCEL_FLAG.store(true, Ordering::SeqCst);
+    let _ = unload_all_models().await;
 }
 
 #[tauri::command]
@@ -1098,6 +1132,12 @@ async fn save_settings(app_handle: tauri::AppHandle, settings: AppSettings) -> R
 
 #[tauri::command]
 fn save_file_to_disk(path: String, bytes: Vec<u8>) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let allowed_extensions = ["png", "jpg", "jpeg", "svg", "json"];
+    if !allowed_extensions.contains(&ext.as_str()) {
+        return Err(format!("Export to '.{}' files is not permitted. Only PNG, JPG, SVG, and JSON are allowed.", ext));
+    }
     std::fs::write(&path, bytes).map_err(|e| format!("Failed to save file: {}", e))
 }
 
@@ -1123,8 +1163,8 @@ pub fn run() {
             cancel_benchmark,
             get_running_models,
             unload_model,
+            unload_all_models,
             pull_model,
-            save_file_to_disk,
             run_intelligence_benchmark,
             check_app_updates,
             get_live_telemetry,
@@ -1198,6 +1238,7 @@ async fn run_lm_eval(
     }
 
     let mut cmd = create_hidden_command("python");
+    cmd.arg("-u"); // Unbuffered output
     cmd.arg(py_path);
     cmd.arg("--model").arg(&model);
     cmd.arg("--task").arg(&task);
@@ -1210,41 +1251,168 @@ async fn run_lm_eval(
 
     let _ = window.emit("benchmark-progress", ProgressPayload {
         model: model.clone(),
-        status: format!("Starting Python evaluation for {}...", task),
-        progress_pct: 5.0,
+        status: format!("Initializing evaluation for {}...", task),
+        progress_pct: 2.0,
         current_tps: 0.0,
-        current_vram: Some(0.0),
-        current_temp: Some(0.0),
+        current_vram: None,
+        current_temp: None,
     });
 
-    let output = cmd.output().map_err(|e| format!("Failed to spawn python: {}", e))?;
+    use std::io::{BufRead, BufReader, Read};
+    use std::process::Stdio;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("LM-Eval failed: {}", stderr));
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn python: {}", e))?;
+
+    let stderr = child.stderr.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+
+    let window_clone = window.clone();
+    let model_clone = model.clone();
+    let task_clone = task.clone();
+    let stderr_thread = std::thread::spawn(move || {
+        let mut reader = stderr;
+        let mut full_stderr = String::new();
+        let mut buffer = Vec::new();
+        let mut byte = [0u8; 1];
+        let start_time = Instant::now();
+        let mut last_emit = Instant::now();
+        let mut questions_done = 0;
+
+        while let Ok(1) = reader.read(&mut byte) {
+            let b = byte[0];
+            if b == b'\r' || b == b'\n' {
+                if !buffer.is_empty() {
+                    let line = String::from_utf8_lossy(&buffer).to_string();
+                    buffer.clear();
+                    full_stderr.push_str(&line);
+                    full_stderr.push('\n');
+
+                    // Extract percentage from progress outputs (e.g. " 12%|", " 50%|", "100%|")
+                    let mut pct = 5.0;
+                    if let Some(pos) = line.find('%') {
+                        let prefix = &line[..pos];
+                        if let Some(num_str) = prefix.split(|c: char| !c.is_ascii_digit()).filter(|s| !s.is_empty()).last() {
+                            if let Ok(p) = num_str.parse::<f64>() {
+                                pct = p.clamp(5.0, 99.0);
+                            }
+                        }
+                    }
+
+                    // Extract questions completed e.g. "3/25" or "12/100"
+                    let mut q_info = String::new();
+                    if let Some(slash_pos) = line.find('/') {
+                        let left = line[..slash_pos].split(|c: char| !c.is_ascii_digit()).filter(|s| !s.is_empty()).last().unwrap_or("");
+                        let right = line[slash_pos + 1..].split(|c: char| !c.is_ascii_digit()).filter(|s| !s.is_empty()).next().unwrap_or("");
+                        if !left.is_empty() && !right.is_empty() {
+                            q_info = format!(" (Question {} of {})", left, right);
+                            if let Ok(q) = left.parse::<u64>() {
+                                questions_done = q;
+                            }
+                        }
+                    }
+
+                    let now = Instant::now();
+                    if now.duration_since(last_emit).as_millis() > 100 || b == b'\n' {
+                        let (vram, temp) = get_nvidia_telemetry();
+                        let elapsed = start_time.elapsed().as_secs_f64().max(0.1);
+                        let current_qps = (questions_done as f64) / elapsed;
+
+                        let status_msg = if line.contains("Requesting API") || !q_info.is_empty() {
+                            format!("Evaluating {}{}", task_clone, q_info)
+                        } else if line.contains("100%|") {
+                            format!("Processing scoring for {}...", task_clone)
+                        } else if line.trim().is_empty() {
+                            format!("Processing {}...", task_clone)
+                        } else {
+                            line.clone()
+                        };
+
+                        let _ = window_clone.emit("benchmark-progress", ProgressPayload {
+                            model: model_clone.clone(),
+                            status: status_msg,
+                            progress_pct: pct,
+                            current_tps: (current_qps * 60.0).clamp(0.0, 500.0), // Q/min speed
+                            current_vram: if vram > 0.0 { Some(vram) } else { None },
+                            current_temp: if temp > 0.0 { Some(temp) } else { None },
+                        });
+                        last_emit = now;
+                    }
+                }
+            } else {
+                buffer.push(b);
+            }
+        }
+        full_stderr
+    });
+    let stdout_reader_thread = std::thread::spawn(move || {
+        let mut out = String::new();
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().filter_map(|l| l.ok()) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+        out
+    });
+
+    // Responsive cancellation loop
+    loop {
+        if CANCEL_FLAG.load(Ordering::SeqCst) {
+            let _ = child.kill();
+            let _ = window.emit("benchmark-progress", ProgressPayload {
+                model: model.clone(),
+                status: "Benchmark cancelled by user".to_string(),
+                progress_pct: 0.0,
+                current_tps: 0.0,
+                current_vram: None,
+                current_temp: None,
+            });
+            return Err("Benchmark cancelled by user".to_string());
+        }
+
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    let final_stderr = stderr_thread.join().unwrap_or_default();
+                    return Err(format!("LM-Eval failed: {}", final_stderr));
+                }
+                break;
+            }
+            Ok(None) => {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+            Err(e) => {
+                return Err(format!("Error monitoring python process: {}", e));
+            }
+        }
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    
-    let mut json_str = stdout.to_string();
-    if let Some(idx) = stdout.rfind('{') {
-        if let Some(end_idx) = stdout.rfind('}') {
-            if end_idx > idx {
-                json_str = stdout[idx..=end_idx].to_string();
+    let final_stdout = stdout_reader_thread.join().unwrap_or_default();
+    let _ = stderr_thread.join();
+
+    let stdout_str = final_stdout.trim();
+    let mut json_str = stdout_str.to_string();
+    if let Some(idx) = stdout_str.find('{') {
+        if let Some(end_idx) = stdout_str.rfind('}') {
+            if end_idx >= idx {
+                json_str = stdout_str[idx..=end_idx].to_string();
             }
         }
     }
 
     let parsed: Value = serde_json::from_str(&json_str)
-        .map_err(|e| format!("Failed to parse JSON from Python: {} | Output: {}", e, stdout))?;
+        .map_err(|e| format!("Failed to parse JSON from Python: {} | Output: {}", e, stdout_str))?;
 
+    let (vram, temp) = get_nvidia_telemetry();
     let _ = window.emit("benchmark-progress", ProgressPayload {
         model: model.clone(),
         status: format!("Completed {}.", task),
         progress_pct: 100.0,
         current_tps: 0.0,
-        current_vram: Some(0.0),
-        current_temp: Some(0.0),
+        current_vram: if vram > 0.0 { Some(vram) } else { None },
+        current_temp: if temp > 0.0 { Some(temp) } else { None },
     });
 
     Ok(parsed)

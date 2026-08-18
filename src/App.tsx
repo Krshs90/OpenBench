@@ -1,6 +1,6 @@
 import { HashRouter as Router, Routes, Route, Link, useLocation } from "react-router-dom";
 import { useState, useEffect } from "react";
-import { Cpu, HardDrives, Speedometer, ChartLineUp, Database, Scales, Gear, TerminalWindow, Storefront } from "@phosphor-icons/react";
+import { Cpu, HardDrives, ChartLineUp, Database, Scales, Gear, TerminalWindow, Storefront } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { Home } from "./pages/Home";
@@ -28,6 +28,17 @@ function Sidebar() {
 
     // Auto-load Ollama if it's not running
     invoke("start_engine", { engine: "Ollama" }).catch(() => {});
+
+    // Gracefully cancel benchmarks and unload models on reload or window close
+    const handleBeforeUnload = () => {
+      invoke("cancel_benchmark").catch(() => {});
+      invoke("unload_all_models").catch(() => {});
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
   }, []);
   
   const handleCancel = async () => {

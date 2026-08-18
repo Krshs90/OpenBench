@@ -1,6 +1,6 @@
 import React from "react";
 import { SavedResult } from "../types";
-import { Cpu, Thermometer, Database, Timer, Lightning } from "@phosphor-icons/react";
+import { Thermometer, Database, Timer, Lightning } from "@phosphor-icons/react";
 
 export const Scorecard = React.forwardRef<HTMLDivElement, { result: SavedResult }>(({ result }, ref) => {
   return (

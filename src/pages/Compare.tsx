@@ -6,23 +6,12 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend
 } from "recharts";
 import { invoke } from "@tauri-apps/api/core";
-import { Spinner, CaretDown, DownloadSimple, Info } from "@phosphor-icons/react";
+import { Spinner, DownloadSimple, Info } from "@phosphor-icons/react";
 import { Link } from "react-router-dom";
 import { Button } from "../components/Button";
 import { Dropdown } from "../components/Dropdown";
+import { SavedResult } from "../types";
 
-interface SavedResult {
-  id: string;
-  model: string;
-  speed: number;
-  vram: number;
-  temp: number;
-  score: number;
-  timestamp: number;
-  workload?: string;
-  benchmark_type?: string;
-  difficulty?: string;
-}
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6", "#f97316"];
 
@@ -159,7 +148,7 @@ export function Compare() {
               <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-64 bg-neutral-900 border border-white/10 rounded-lg shadow-xl p-3 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 text-left font-sans">
                 <p className="text-xs text-neutral-300 font-medium mb-1">Score Normalization</p>
                 <p className="text-[10px] text-neutral-500 leading-relaxed">
-                  Raw scores are calculated via <code className="text-brand-400 font-mono bg-black/50 px-1 rounded">(TPS * 10) + (100 - Temp) - (VRAM * 5)</code>. In this chart, they are normalized from 0-100 against the best model in the selection.
+                  Raw scores are calculated via <code className="text-brand-400 font-mono bg-black/50 px-1 rounded">speed - (temp × 0.05) - (vram × 0.2)</code>. In this chart, they are normalized from 0–100 against the best model in the selection.
                 </p>
               </div>
             </div>

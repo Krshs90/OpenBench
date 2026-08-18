@@ -2,12 +2,33 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Card, cn } from "../components/Card";
 import { Button } from "../components/Button";
-import { Cpu, Warning, FilePlus, Trash, Plus, ArrowLeft, ArrowRight, CheckCircle, Brain, Desktop, ShieldChevron, MagnifyingGlass, ChartLineUp } from "@phosphor-icons/react";
+import { Cpu, Warning, FilePlus, Trash, Plus, ArrowLeft, ArrowRight, CheckCircle, Brain, Desktop, ShieldChevron, MagnifyingGlass, ChartLineUp, XCircle } from "@phosphor-icons/react";
 import { useBenchmark } from "../context/BenchmarkContext";
 import { useToast } from "../components/Toast";
 import { LocalModel } from "../types";
 import { Dropdown } from "../components/Dropdown";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { LineChart, Line, YAxis, ResponsiveContainer, Tooltip } from "recharts";
+
+const TelemetryTooltip = ({ active, payload, unit }: any) => {
+  if (active && payload && payload.length) {
+    const dataPoint = payload[0];
+    const val = dataPoint.value;
+    const timeStr = dataPoint.payload?.timeLabel;
+    return (
+      <div className="bg-neutral-900/95 backdrop-blur-md border border-white/15 px-3 py-1.5 rounded-lg shadow-2xl flex flex-col gap-0.5 pointer-events-none z-50">
+        {timeStr && <span className="text-[9px] text-neutral-400 font-mono">{timeStr}</span>}
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dataPoint.stroke || dataPoint.color }} />
+          <span className="text-xs font-mono font-bold text-white">
+            {typeof val === "number" ? val.toFixed(1) : val}
+          </span>
+          <span className="text-[10px] text-neutral-400">{unit}</span>
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
 
 interface SystemInfo {
   gpus: string[];
@@ -17,11 +38,12 @@ interface SystemInfo {
 
 export const HARDWARE_TESTS = ["Standard (Chat)", "Context (NIAH)", "Latency (TTFT)", "Canonical Suite"];
 export const INTELLIGENCE_TESTS = ["Intelligence (LLM-as-a-Judge)"];
-export const FEATURED_TESTS = ["MMLU", "GPQA Diamond", "LiveMCPBench", "Exercism", "GraphWalks", "SimpleQA"];
+export const FEATURED_TESTS = ["MMLU-Pro", "GPQA Diamond", "LiveMCPBench", "Exercism", "GraphWalks", "SimpleQA"];
 export const CODE_TESTS = ["SWE-bench", "HumanEval", "Code Generation"];
 export const STANDARDIZED_TESTS = ["LSAT", "SAT", "AGIEval", "GSM8K", "Reasoning & Logic"];
 export const AGENTIC_TESTS = ["BFCL"];
-export const LM_EVAL_TESTS = ["hellaswag", "MMLU", "GPQA Diamond", "LiveMCPBench", "Exercism", "GraphWalks", "SimpleQA", "SWE-bench", "HumanEval", "LSAT", "SAT", "AGIEval", "GSM8K", "BFCL"];
+export const LM_EVAL_TESTS = ["hellaswag", "MMLU-Pro", "GPQA Diamond", "LiveMCPBench", "Exercism", "GraphWalks", "SimpleQA", "SWE-bench", "HumanEval", "LSAT", "SAT", "AGIEval", "GSM8K", "BFCL"];
+export const OLLAMA_INCOMPATIBLE = ["hellaswag", "GPQA Diamond", "LSAT", "SAT", "AGIEval"];
 
 export const BENCHMARK_DESCRIPTIONS: Record<string, { title: string, measures: string, desc: string }> = {
   "Standard (Chat)": {
@@ -63,6 +85,11 @@ export const BENCHMARK_DESCRIPTIONS: Record<string, { title: string, measures: s
     title: "HellaSwag",
     measures: "Commonsense NLI",
     desc: "Evaluates commonsense natural language inference (NLI) by selecting the most logical completion for a scenario."
+  },
+  "MMLU-Pro": {
+    title: "MMLU-Pro",
+    measures: "Advanced Multitask Reasoning",
+    desc: "A rigorous, reasoning-focused benchmark with 12,000+ complex questions across 14 disciplines with 10 options per question."
   },
   "MMLU": {
     title: "MMLU",
@@ -130,18 +157,56 @@ export const BENCHMARK_DESCRIPTIONS: Record<string, { title: string, measures: s
     desc: "Comprehensive evaluation of function calling capabilities across multiple languages."
   }
 };
+
+export function getModelCompatibility(modelName: string, benchmarkType: string): { 
+  compatible: boolean; 
+  badge: string; 
+  reason?: string; 
+} {
+  const name = modelName.toLowerCase();
+  const isVision = name.includes("llava") || name.includes("vision") || name.includes("vl");
+  const isBaseCodeOnly = name.includes("starcoder") || (name.includes("codellama") && !name.includes("instruct"));
+  const isTiny = name.includes("0.5b") || name.includes("1.1b") || name.includes("tiny");
+
+  // Code benchmarks
+  if (CODE_TESTS.includes(benchmarkType) || benchmarkType === "Code Generation" || benchmarkType === "HumanEval" || benchmarkType === "SWE-bench" || benchmarkType === "Exercism") {
+    if (isVision) return { compatible: false, badge: "Incompatible", reason: "Vision models are not structured for pure code generation." };
+    if (isBaseCodeOnly) return { compatible: true, badge: "Code Specialized", reason: "Optimized for raw code synthesis and completion." };
+    return { compatible: true, badge: "Code Capable", reason: "Instruct model capable of code generation." };
+  }
+
+  // Large Context / NIAH
+  if (benchmarkType === "Context (NIAH)") {
+    if (isTiny) return { compatible: false, badge: "Limited Context", reason: "Sub-1B models may struggle with large context window retention." };
+    return { compatible: true, badge: "Context Capable" };
+  }
+
+  // Chat / LLM-as-a-Judge / Standardized Exams / Agentic
+  if (isBaseCodeOnly) {
+    return { compatible: false, badge: "Code Only (Incompatible with Chat)", reason: "Base code completion model; lacks instruction tuning for conversational reasoning and Q&A." };
+  }
+
+  if (isVision && (STANDARDIZED_TESTS.includes(benchmarkType) || INTELLIGENCE_TESTS.includes(benchmarkType))) {
+    return { compatible: false, badge: "Vision Specialized", reason: "Vision model; text-only reasoning and standardized exams may underperform." };
+  }
+
+  return { compatible: true, badge: "Compatible" };
+}
+
 const DIFFICULTIES = ["Light", "Medium", "Heavy", "Stress"];
 
 export function Benchmark() {
   const { toast } = useToast();
   const { 
     status, error, selectedModels, benchmarkType, difficulty, judgeModel, streams, intelligenceResults,
-    datasetMode, customPrompts, results, telemetryHistory, logStream,
-    setSelectedModels, setBenchmarkType, setDifficulty, setJudgeModel, setDatasetMode, setCustomPrompts, runBenchmark, resetBenchmark 
+    datasetMode, customPrompts, results, telemetryHistory, logStream, customQuestionLimit, setCustomQuestionLimit,
+    setSelectedModels, setBenchmarkType, setDifficulty, setJudgeModel, setDatasetMode, setCustomPrompts, runBenchmark, resetBenchmark, cancelBenchmark 
   } = useBenchmark();
 
   const [step, setStep] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
+  const [hideIncompatible, setHideIncompatible] = useState<boolean>(true);
+  const [filterCompatibleModels, setFilterCompatibleModels] = useState<boolean>(true);
   const [testCategory, setTestCategory] = useState<"hardware" | "intelligence" | "canonical">(() => {
     if (benchmarkType === "Canonical Suite") return "canonical";
     return HARDWARE_TESTS.includes(benchmarkType) ? "hardware" : "intelligence";
@@ -205,8 +270,8 @@ export function Benchmark() {
   const handleSelectBenchmark = (type: string, category: "hardware" | "intelligence" | "canonical") => {
     setBenchmarkType(type);
     setTestCategory(category);
-    if (category === "canonical" || LM_EVAL_TESTS.includes(type)) {
-      setStep(3); // canonical and lm_eval skip config
+    if (category === "canonical") {
+      setStep(3); // canonical skips config
     } else {
       setStep(2);
     }
@@ -270,9 +335,13 @@ export function Benchmark() {
   // ---------------------------------------------------------------------------
   const renderStep1 = () => {
     const filterBySearch = (tests: string[]) => {
-      if (!searchQuery.trim()) return tests;
+      let filtered = tests;
+      if (hideIncompatible) {
+        filtered = filtered.filter(t => !OLLAMA_INCOMPATIBLE.includes(t));
+      }
+      if (!searchQuery.trim()) return filtered;
       const lower = searchQuery.toLowerCase();
-      return tests.filter(t => 
+      return filtered.filter(t => 
         BENCHMARK_DESCRIPTIONS[t]?.title.toLowerCase().includes(lower) || 
         BENCHMARK_DESCRIPTIONS[t]?.desc.toLowerCase().includes(lower) ||
         BENCHMARK_DESCRIPTIONS[t]?.measures.toLowerCase().includes(lower)
@@ -321,16 +390,30 @@ export function Benchmark() {
     return (
       <div className="flex flex-col gap-8 animate-in fade-in slide-in-from-right-4 duration-500">
         
-        {/* Search Bar */}
-        <div className="relative w-full mb-2">
-          <MagnifyingGlass className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-neutral-500" />
-          <input 
-            type="text" 
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search benchmarks by name, measure, or description..."
-            className="w-full bg-black/40 border border-white/10 rounded-xl pl-11 pr-4 py-4 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-brand-500/50 transition-colors shadow-inner"
-          />
+        {/* Search Bar & Filter */}
+        <div className="flex flex-col md:flex-row gap-4 mb-2">
+          <div className="relative flex-1">
+            <MagnifyingGlass className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-neutral-500" />
+            <input 
+              type="text" 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search benchmarks by name, measure, or description..."
+              className="w-full bg-black/40 border border-white/10 rounded-xl pl-11 pr-4 py-4 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-brand-500/50 transition-colors shadow-inner"
+            />
+          </div>
+          <button 
+            onClick={() => setHideIncompatible(!hideIncompatible)}
+            className={cn(
+              "flex items-center gap-2 px-4 py-3 rounded-xl border text-sm font-medium transition-all",
+              hideIncompatible 
+                ? "bg-brand-500/10 border-brand-500/30 text-brand-300" 
+                : "bg-white/5 border-white/10 text-neutral-400 hover:text-white"
+            )}
+          >
+            <CheckCircle weight={hideIncompatible ? "fill" : "regular"} className={hideIncompatible ? "text-brand-400" : ""} />
+            Ollama Compatible Only
+          </button>
         </div>
 
         {renderCategory("Featured", filteredFeatured, <ShieldChevron className="w-6 h-6 text-brand-400" />, "Industry-leading frontier evaluations.", "intelligence")}
@@ -376,6 +459,70 @@ export function Benchmark() {
             <span className="text-[10px] text-neutral-500 mt-1">
               The judge model will evaluate the outputs of your selected models. If you select a recommended model you don't have, it will pull automatically.
             </span>
+          </div>
+        ) : LM_EVAL_TESTS.includes(benchmarkType) ? (
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-brand-400 font-medium">Evaluation Depth (Sample Size)</label>
+              <p className="text-xs text-neutral-500">Choose how many questions to evaluate from the dataset.</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                { id: "Light", name: "Quick Sample", count: "25 Questions", time: "~1 min", desc: "Fast sanity check" },
+                { id: "Medium", name: "Standard", count: "100 Questions", time: "~5 mins", desc: "Recommended balance" },
+                { id: "Heavy", name: "Thorough", count: "500 Questions", time: "~25 mins", desc: "High precision" },
+                { id: "Stress", name: "Full Dataset", count: "All Questions", time: "Hours", desc: "Exhaustive evaluation" }
+              ].map((preset) => (
+                <button
+                  key={preset.id}
+                  onClick={() => { setDifficulty(preset.id); setCustomQuestionLimit(undefined); }}
+                  className={cn(
+                    "flex flex-col p-4 rounded-xl border text-left transition-all",
+                    difficulty === preset.id && customQuestionLimit === undefined
+                      ? "bg-brand-500/10 border-brand-500/50 shadow-[0_0_15px_rgba(56,189,248,0.15)] text-white"
+                      : "bg-white/5 border-white/10 text-neutral-400 hover:text-white hover:bg-white/10"
+                  )}
+                >
+                  <div className="flex items-center justify-between w-full mb-1">
+                    <span className="font-semibold text-sm">{preset.name}</span>
+                    <span className="text-[10px] font-mono text-brand-400">{preset.time}</span>
+                  </div>
+                  <span className="text-xs text-brand-300 font-mono mb-1">{preset.count}</span>
+                  <span className="text-[10px] text-neutral-500">{preset.desc}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-col gap-2 p-4 rounded-xl bg-black/30 border border-white/10 mt-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-neutral-300 font-medium">Custom Question Count</label>
+                {customQuestionLimit !== undefined && (
+                  <button 
+                    onClick={() => setCustomQuestionLimit(undefined)}
+                    className="text-[11px] text-brand-400 hover:underline"
+                  >
+                    Reset to preset ({difficulty})
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <input 
+                  type="number"
+                  min="1"
+                  max="15000"
+                  placeholder="e.g. 50"
+                  value={customQuestionLimit ?? ""}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value);
+                    setCustomQuestionLimit(isNaN(val) || val <= 0 ? undefined : val);
+                  }}
+                  className="w-48 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-brand-500/50"
+                />
+                <span className="text-xs text-neutral-500">
+                  {customQuestionLimit ? `Will evaluate exactly ${customQuestionLimit} questions.` : "Type an exact count (e.g. 10, 50, 200) or use presets above."}
+                </span>
+              </div>
+            </div>
           </div>
         ) : (
           <>
@@ -491,36 +638,68 @@ export function Benchmark() {
   const renderStep3 = () => (
     <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-right-4 duration-500">
       <Card innerClassName="p-6 flex flex-col gap-8">
-        <div>
-          <h2 className="text-xl font-medium text-white mb-2">Select Target Models</h2>
-          <p className="text-sm text-neutral-400">Choose which local models will run {BENCHMARK_DESCRIPTIONS[benchmarkType]?.title}.</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-medium text-white mb-1">Select Target Models</h2>
+            <p className="text-sm text-neutral-400">Choose which local models will run {BENCHMARK_DESCRIPTIONS[benchmarkType]?.title || benchmarkType}.</p>
+          </div>
+          <button
+            onClick={() => setFilterCompatibleModels(!filterCompatibleModels)}
+            className={cn(
+              "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
+              filterCompatibleModels ? "bg-brand-500/10 border-brand-500/30 text-brand-300" : "bg-white/5 border-white/10 text-neutral-400 hover:text-white"
+            )}
+          >
+            <CheckCircle weight={filterCompatibleModels ? "fill" : "regular"} className={filterCompatibleModels ? "text-brand-400" : ""} />
+            Compatible Models Only
+          </button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-          {availableModels.map(model => {
-            const isSelected = selectedModels.includes(model.name);
-            return (
-              <button
-                key={model.name}
-                onClick={() => toggleModel(model.name)}
-                className={cn(
-                  "flex flex-col text-left p-4 rounded-xl border transition-all duration-200 outline-none",
-                  isSelected 
-                    ? "bg-brand-500/10 border-brand-500/50 shadow-[0_0_15px_rgba(56,189,248,0.15)]" 
-                    : "bg-white/5 border-white/10 hover:border-white/30 hover:bg-white/10"
-                )}
-              >
-                <div className="flex items-center justify-between w-full mb-2">
-                  <span className={cn("font-medium truncate", isSelected ? "text-brand-300" : "text-white")}>{model.name}</span>
-                  {isSelected && <CheckCircle weight="fill" className="text-brand-400 flex-shrink-0 w-5 h-5" />}
-                </div>
-                <div className="flex items-center flex-wrap gap-2 text-[10px] text-neutral-500 font-mono mt-auto pt-2 border-t border-white/5">
-                  <span className="bg-white/5 px-1.5 py-0.5 rounded">{model.size}</span>
-                  {model.parameter_size && <span className="bg-white/5 px-1.5 py-0.5 rounded">{model.parameter_size}</span>}
-                  {model.quantization_level && <span className="bg-white/5 px-1.5 py-0.5 rounded">{model.quantization_level}</span>}
-                </div>
-              </button>
-            );
+          {availableModels
+            .filter(model => !filterCompatibleModels || getModelCompatibility(model.name, benchmarkType).compatible)
+            .map(model => {
+              const isSelected = selectedModels.includes(model.name);
+              const compat = getModelCompatibility(model.name, benchmarkType);
+              return (
+                <button
+                  key={model.name}
+                  onClick={() => toggleModel(model.name)}
+                  className={cn(
+                    "flex flex-col text-left p-4 rounded-xl border transition-all duration-200 outline-none relative group",
+                    isSelected 
+                      ? "bg-brand-500/10 border-brand-500/50 shadow-[0_0_15px_rgba(56,189,248,0.15)]" 
+                      : compat.compatible
+                        ? "bg-white/5 border-white/10 hover:border-white/30 hover:bg-white/10"
+                        : "bg-white/[0.02] border-white/5 opacity-60 hover:opacity-100"
+                  )}
+                >
+                  <div className="flex items-center justify-between w-full mb-1">
+                    <span className={cn("font-medium truncate", isSelected ? "text-brand-300" : "text-white")}>{model.name}</span>
+                    {isSelected && <CheckCircle weight="fill" className="text-brand-400 flex-shrink-0 w-5 h-5" />}
+                  </div>
+
+                  <div className="mb-2">
+                    <span className={cn(
+                      "text-[10px] font-semibold px-2 py-0.5 rounded",
+                      compat.compatible 
+                        ? compat.badge.includes("Specialized") ? "bg-purple-500/20 text-purple-300" : "bg-green-500/20 text-green-300"
+                        : "bg-orange-500/20 text-orange-300"
+                    )}>
+                      {compat.badge}
+                    </span>
+                    {compat.reason && !compat.compatible && (
+                      <p className="text-[10px] text-neutral-500 mt-1 leading-tight">{compat.reason}</p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center flex-wrap gap-2 text-[10px] text-neutral-500 font-mono mt-auto pt-2 border-t border-white/5">
+                    <span className="bg-white/5 px-1.5 py-0.5 rounded">{model.size}</span>
+                    {model.parameter_size && <span className="bg-white/5 px-1.5 py-0.5 rounded">{model.parameter_size}</span>}
+                    {model.quantization_level && <span className="bg-white/5 px-1.5 py-0.5 rounded">{model.quantization_level}</span>}
+                  </div>
+                </button>
+              );
           })}
         </div>
 
@@ -548,7 +727,7 @@ export function Benchmark() {
       </Card>
 
       <div className="flex items-center justify-between mt-4">
-        <Button variant="secondary" onClick={() => setStep((testCategory === "canonical" || LM_EVAL_TESTS.includes(benchmarkType)) ? 1 : 2)} icon={<ArrowLeft />}>Back</Button>
+        <Button variant="secondary" onClick={() => setStep(testCategory === "canonical" ? 1 : 2)} icon={<ArrowLeft />}>Back</Button>
         <Button 
           variant="primary" 
           disabled={selectedModels.length === 0 || (!hasPythonDeps && LM_EVAL_TESTS.includes(benchmarkType)) || isCheckingDeps}
@@ -637,8 +816,79 @@ export function Benchmark() {
           ))}
           <Button variant="secondary" onClick={() => { resetBenchmark(); setStep(1); }}>Run Another Benchmark</Button>
         </div>
+      ) : status === "completed" && LM_EVAL_TESTS.includes(benchmarkType) ? (
+        <div className="grid gap-6 animate-in fade-in zoom-in-95 duration-500">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-medium text-white">{BENCHMARK_DESCRIPTIONS[benchmarkType]?.title || benchmarkType} Results</h2>
+            <span className="text-xs text-brand-400 bg-brand-500/10 border border-brand-500/20 px-3 py-1 rounded-full font-mono">
+              {customQuestionLimit ? `${customQuestionLimit} Questions Evaluated` : `${difficulty} Preset`}
+            </span>
+          </div>
+
+          {results.map((res, i) => {
+            const accScore = res.tokens_per_sec;
+            return (
+              <Card key={i} innerClassName="p-6 flex flex-col gap-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-1">
+                    <span className="font-bold text-lg text-white">{res.model_name}</span>
+                    <span className="text-xs text-neutral-400">Standardized Knowledge & Reasoning Benchmark</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-neutral-400 font-semibold uppercase tracking-wider">Accuracy:</span>
+                    <span className="text-3xl font-black text-brand-400 font-mono">
+                      {accScore > 0 ? `${accScore.toFixed(1)}%` : "Complete"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-2 mb-2 border-y border-white/5 py-4">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] text-neutral-500 font-semibold uppercase tracking-wider">Benchmark Task</span>
+                    <span className="text-sm text-white font-mono">{benchmarkType}</span>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] text-neutral-500 font-semibold uppercase tracking-wider">Evaluation Sample</span>
+                    <span className="text-sm text-white font-mono">{customQuestionLimit ? `${customQuestionLimit} Qs` : `${difficulty} Preset`}</span>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] text-neutral-500 font-semibold uppercase tracking-wider">Status</span>
+                    <span className="text-sm text-green-400 font-medium">Saved to Results History</span>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-brand-500/5 rounded-xl border border-brand-500/20 text-xs text-brand-300">
+                  Detailed evaluation metrics and accuracy breakdown have been saved to your local database. Head over to the Results page to view full history or export a scorecard.
+                </div>
+              </Card>
+            );
+          })}
+
+          <div className="flex gap-4 items-center mt-2">
+            <Button variant="secondary" onClick={() => { resetBenchmark(); setStep(1); }}>Run Another Benchmark</Button>
+          </div>
+        </div>
       ) : (
-        <div className="grid gap-4 animate-in fade-in zoom-in-95 duration-500">
+        <div className="flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-500">
+          {status === "running" && (
+            <div className="flex items-center justify-between bg-red-500/10 border border-red-500/20 p-4 rounded-xl">
+              <div className="flex items-center gap-3">
+                <div className="w-2.5 h-2.5 rounded-full bg-brand-400" />
+                <div>
+                  <span className="text-sm font-medium text-white">Benchmark in Progress</span>
+                  <p className="text-xs text-neutral-400">Live telemetry and evaluations are streaming below.</p>
+                </div>
+              </div>
+              <Button 
+                variant="secondary" 
+                onClick={cancelBenchmark}
+                icon={<XCircle className="w-4 h-4 text-red-400" />}
+                className="bg-red-500/20 hover:bg-red-500/30 text-red-300 border-red-500/30 text-xs px-4 py-2"
+              >
+                Cancel Benchmark
+              </Button>
+            </div>
+          )}
           {selectedModels.map(model => {
             const stream = streams[model];
             const isDetailed = settings?.detailed_telemetry;
@@ -657,7 +907,7 @@ export function Benchmark() {
                   <div className="relative z-10 flex items-center justify-between">
                     <div className="flex flex-col gap-1">
                       <span className="text-xl text-white font-medium flex items-center gap-2">
-                        <ChartLineUp className="text-brand-400 animate-pulse w-6 h-6" />
+                        <ChartLineUp className="text-brand-400 w-6 h-6" />
                         {model}
                       </span>
                       <span className="text-sm text-neutral-400">{stream?.status || "Initializing telemetry..."}</span>
@@ -675,7 +925,8 @@ export function Benchmark() {
                       <span className="text-[10px] text-brand-400 font-bold tracking-widest uppercase">Throughput (TPS)</span>
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={history}>
-                          <Line type="monotone" dataKey="tps" stroke="#38bdf8" strokeWidth={2} dot={false} isAnimationActive={false} />
+                          <Tooltip content={<TelemetryTooltip unit="t/s" />} cursor={{ stroke: 'rgba(56, 189, 248, 0.2)', strokeDasharray: '3 3' }} />
+                          <Line type="monotone" dataKey="tps" stroke="#38bdf8" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#38bdf8', stroke: '#fff', strokeWidth: 1.5 }} isAnimationActive={false} />
                           <YAxis domain={['auto', 'auto']} hide />
                         </LineChart>
                       </ResponsiveContainer>
@@ -688,7 +939,8 @@ export function Benchmark() {
                       </div>
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={history}>
-                          <Line type="stepAfter" dataKey="vram" stroke="#4ade80" strokeWidth={2} dot={false} isAnimationActive={false} />
+                          <Tooltip content={<TelemetryTooltip unit="GB" />} cursor={{ stroke: 'rgba(74, 222, 128, 0.2)', strokeDasharray: '3 3' }} />
+                          <Line type="stepAfter" dataKey="vram" stroke="#4ade80" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#4ade80', stroke: '#fff', strokeWidth: 1.5 }} isAnimationActive={false} />
                           <YAxis domain={[0, 'auto']} hide />
                         </LineChart>
                       </ResponsiveContainer>
@@ -701,7 +953,8 @@ export function Benchmark() {
                       </div>
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={history}>
-                          <Line type="monotone" dataKey="temp" stroke="#fb923c" strokeWidth={2} dot={false} isAnimationActive={false} />
+                          <Tooltip content={<TelemetryTooltip unit="°C" />} cursor={{ stroke: 'rgba(251, 146, 60, 0.2)', strokeDasharray: '3 3' }} />
+                          <Line type="monotone" dataKey="temp" stroke="#fb923c" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#fb923c', stroke: '#fff', strokeWidth: 1.5 }} isAnimationActive={false} />
                           <YAxis domain={[0, 100]} hide />
                         </LineChart>
                       </ResponsiveContainer>
@@ -713,11 +966,11 @@ export function Benchmark() {
                     <div className="bg-black/40 border border-white/5 rounded-lg p-4 h-32 overflow-y-auto font-mono text-xs text-neutral-400 custom-scrollbar flex flex-col gap-1.5 shadow-inner">
                       {logs.map((l, i) => (
                         <div key={i} className="flex gap-3 items-start">
-                          <span className="text-brand-500/50 flex-shrink-0">[{new Date().toLocaleTimeString()}]</span>
-                          <span className="text-neutral-300 break-words">{l}</span>
+                          <span className="text-brand-500/50 flex-shrink-0">[{new Date(l.time).toLocaleTimeString()}]</span>
+                          <span className="text-neutral-300 break-words">{l.msg}</span>
                         </div>
                       ))}
-                      <div className="animate-pulse w-1.5 h-3.5 bg-brand-500 mt-1" />
+                      <div className="w-1.5 h-3.5 bg-brand-500 mt-1" />
                     </div>
                   </div>
                 </Card>

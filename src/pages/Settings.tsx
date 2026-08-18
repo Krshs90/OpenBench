@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
-import { FloppyDisk, Trash, ShieldCheck, Database, GitBranch } from "@phosphor-icons/react";
+import { Trash, ShieldCheck, Database, GitBranch } from "@phosphor-icons/react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "../components/Card";
 import { SectionHeader } from "../components/SectionHeader";
@@ -203,11 +203,11 @@ export function Settings() {
           
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <span className="text-neutral-200 font-medium">Malware Protection (Active)</span>
-              <div className="px-2 py-0.5 bg-green-500/10 text-green-500 text-[10px]  font-semibold rounded">Running</div>
+              <span className="text-neutral-200 font-medium">Model Format Safety Check</span>
+              <div className="px-2 py-0.5 bg-yellow-500/10 text-yellow-400 text-[10px] font-semibold rounded">Extension-Based</div>
             </div>
             <p className="text-xs text-neutral-500 leading-relaxed max-w-[65ch]">
-              OpenBench automatically scans local filesystem models. Legacy formats (like `.ckpt` and `.pt`) which can execute arbitrary python payloads are flagged, while `.safetensors` and `.gguf` architectures are verified as safe.
+              OpenBench flags legacy model formats that can execute arbitrary code: <code className="text-brand-400 font-mono bg-black/50 px-1 rounded">.ckpt</code>, <code className="text-brand-400 font-mono bg-black/50 px-1 rounded">.pt</code>, and <code className="text-brand-400 font-mono bg-black/50 px-1 rounded">.bin</code> files are marked as high-risk. Modern formats like <code className="text-brand-400 font-mono bg-black/50 px-1 rounded">.safetensors</code> and <code className="text-brand-400 font-mono bg-black/50 px-1 rounded">.gguf</code> are considered safe by design. Note: this is a format check, not a malware scanner.
             </p>
           </div>
         </Card>
